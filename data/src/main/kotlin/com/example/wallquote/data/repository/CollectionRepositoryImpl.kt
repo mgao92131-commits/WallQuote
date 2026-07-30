@@ -24,19 +24,14 @@ class CollectionRepositoryImpl @Inject constructor(
 
     override suspend fun upsertCollection(config: CollectionConfig): Long {
         val entity = config.toEntity()
-        val id = if (entity.id == 0L) {
+        val collectionForInsert = if (entity.id == 0L) {
             val sortOrder = if (config.sortOrder == 0) dao.maxSortOrder() + 1 else config.sortOrder
-            dao.insertCollection(entity.copy(sortOrder = sortOrder))
+            entity.copy(sortOrder = sortOrder)
         } else {
-            dao.insertCollection(entity)
-            entity.id
+            entity
         }
-        dao.deleteLinesForCollection(id)
-        val lines = config.copy(id = id).toLineEntities(id)
-        if (lines.isNotEmpty()) {
-            dao.insertLines(lines)
-        }
-        return id
+        val lines = config.toLineEntities(collectionForInsert.id)
+        return dao.saveCollectionWithLines(collectionForInsert, lines)
     }
 
     override suspend fun deleteCollection(id: Long) {

@@ -3,6 +3,7 @@ package com.example.wallquote.domain.usecase
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.domain.model.DailyTimeRange
+import com.example.wallquote.domain.model.QuoteLine
 import com.example.wallquote.domain.model.TextStyleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -20,7 +21,7 @@ class SelectActiveCollectionsUseCaseTest {
         name = "c$id",
         schedule = DailyTimeRange(start, end),
         background = BackgroundSpec.Solid("#000000"),
-        texts = listOf("t"),
+        lines = listOf(QuoteLine(id = 1, text = "t", displayOrder = 0)),
         textStyle = TextStyleConfig(),
     )
 

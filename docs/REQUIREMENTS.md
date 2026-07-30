@@ -1,6 +1,6 @@
 # WallQuote 需求分级
 
-> 依据 `WebTermUploads/SOFTWARE_DESIGN.md` 整理。类名与模块名仅作职责参考，不要求复刻原实现。
+> 依据 `docs/archive/LEGACY_SOFTWARE_DESIGN.md`（考古）整理。类名与模块名仅作职责参考，不要求复刻原实现。
 
 ## P0 首版需求
 

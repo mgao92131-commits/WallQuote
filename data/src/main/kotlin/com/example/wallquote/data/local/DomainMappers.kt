@@ -1,11 +1,21 @@
 package com.example.wallquote.data.local
 
 import com.example.wallquote.domain.model.CollectionConfig
+import com.example.wallquote.domain.model.QuoteLine
+import com.example.wallquote.domain.model.QuoteTransform
 
 fun CollectionWithLines.toDomain(): CollectionConfig {
     val background = parseBackground(collection.backgroundType, collection.backgroundData)
     val style = parseTextStyle(collection.textStyleData)
-    val texts = lines.sortedBy { it.displayOrder }.map { it.text }
+    val quoteLines = lines
+        .sortedBy { it.displayOrder }
+        .map { entity ->
+            QuoteLine(
+                id = entity.id,
+                text = entity.text,
+                displayOrder = entity.displayOrder,
+            )
+        }
     return CollectionConfig(
         id = collection.id,
         name = collection.name,
@@ -14,11 +24,13 @@ fun CollectionWithLines.toDomain(): CollectionConfig {
             collection.endMinuteOfDay,
         ),
         background = background,
-        texts = texts,
+        lines = quoteLines,
         textStyle = style,
-        offsetX = collection.offsetX,
-        offsetY = collection.offsetY,
-        rotation = collection.rotation,
+        transform = QuoteTransform(
+            centerXFraction = collection.offsetX,
+            centerYFraction = collection.offsetY,
+            rotationDegrees = collection.rotation,
+        ),
         sortOrder = collection.sortOrder,
     )
 }
@@ -33,18 +45,21 @@ fun CollectionConfig.toEntity(): CollectionEntity {
         backgroundType = type,
         backgroundData = data,
         textStyleData = textStyle.toJson(),
-        offsetX = offsetX,
-        offsetY = offsetY,
-        rotation = rotation,
+        offsetX = transform.centerXFraction,
+        offsetY = transform.centerYFraction,
+        rotation = transform.rotationDegrees,
         sortOrder = sortOrder,
     )
 }
 
 fun CollectionConfig.toLineEntities(collectionId: Long): List<CollectionTextLineEntity> =
-    texts.mapIndexed { index, text ->
-        CollectionTextLineEntity(
-            collectionId = collectionId,
-            text = text,
-            displayOrder = index,
-        )
-    }
+    lines
+        .sortedBy { it.displayOrder }
+        .mapIndexed { index, line ->
+            CollectionTextLineEntity(
+                id = line.id,
+                collectionId = collectionId,
+                text = line.text,
+                displayOrder = index,
+            )
+        }

@@ -5,10 +5,8 @@ data class CollectionConfig(
     val name: String,
     val schedule: DailyTimeRange,
     val background: BackgroundSpec,
-    val texts: List<String>,
+    val lines: List<QuoteLine>,
     val textStyle: TextStyleConfig,
-    val offsetX: Float = 0f,
-    val offsetY: Float = 0f,
-    val rotation: Float = 0f,
+    val transform: QuoteTransform = QuoteTransform(),
     val sortOrder: Int = 0,
 )

@@ -73,4 +73,7 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("org.mockito:mockito-core:5.14.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

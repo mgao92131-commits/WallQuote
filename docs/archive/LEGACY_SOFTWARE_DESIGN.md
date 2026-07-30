@@ -1,3 +1,9 @@
+> **考古材料 — 非当前实现规格**  
+> 本文件描述已遗失的旧版 WallQuote（反编译重构稿），**不是**必须复刻的源码或兼容目标。  
+> 当前权威规格：`docs/REQUIREMENTS.md`、`docs/DECISIONS.md`、`docs/IMPLEMENTATION_PLAN.md`。
+
+---
+
 # WallQuote（壁上言）软件设计文档
 
 > 版本: 1.0 | 日期: 2024 | 基于反编译源码分析重构

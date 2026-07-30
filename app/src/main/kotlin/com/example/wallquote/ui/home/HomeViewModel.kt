@@ -6,8 +6,10 @@ import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.domain.usecase.DeleteCollectionUseCase
 import com.example.wallquote.domain.usecase.ObserveOrderedCollectionsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -22,9 +24,17 @@ class HomeViewModel @Inject constructor(
         observeOrderedCollectionsUseCase()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    fun clearError() {
+        _errorMessage.value = null
+    }
+
     fun deleteCollection(id: Long) {
         viewModelScope.launch {
-            deleteCollectionUseCase(id)
+            runCatching { deleteCollectionUseCase(id) }
+                .onFailure { _errorMessage.value = "删除失败，请重试" }
         }
     }
 }

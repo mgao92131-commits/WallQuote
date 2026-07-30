@@ -1,6 +1,7 @@
 package com.example.wallquote.ui.editor
 
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -44,7 +45,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wallquote.core.preview.QuotePreview
-import com.example.wallquote.core.preview.WallpaperPreviewState
+import com.example.wallquote.domain.model.QuoteLine
+import com.example.wallquote.domain.model.QuoteRenderInput
+import com.example.wallquote.domain.time.HALF_HOUR_SLOTS
+import com.example.wallquote.domain.time.halfHourIndexFromMinute
 import com.example.wallquote.core.preview.parseColorHex
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.ui.util.formatMinuteOfDay
@@ -62,35 +66,55 @@ fun EditorScreen(
     viewModel: EditorViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var showDiscard by remember { mutableStateOf(false) }
+    var showUnsaved by remember { mutableStateOf(false) }
 
-    LaunchedEffect(collectionId) {
-        // ViewModel reads nav args; this parameter documents navigation contract.
+    BackHandler {
+        viewModel.requestClose()
     }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
                 EditorEvent.Finish -> onFinished()
-                EditorEvent.ShowDiscardDialog -> showDiscard = true
+                EditorEvent.ShowUnsavedDialog -> showUnsaved = true
             }
         }
     }
 
-    if (showDiscard) {
+    if (showUnsaved) {
         AlertDialog(
-            onDismissRequest = { showDiscard = false },
-            title = { Text("放弃未保存的更改？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDiscard = false
-                        onFinished()
-                    },
-                ) { Text("放弃") }
+            onDismissRequest = { showUnsaved = false },
+            title = { Text("有未保存的更改") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("保存、放弃修改，或继续编辑？")
+                    TextButton(
+                        onClick = {
+                            showUnsaved = false
+                            viewModel.saveAndFinish()
+                        },
+                    ) { Text("保存") }
+                    TextButton(
+                        onClick = {
+                            showUnsaved = false
+                            viewModel.discardAndFinish()
+                        },
+                    ) { Text("放弃修改") }
+                    TextButton(onClick = { showUnsaved = false }) { Text("继续编辑") }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { showDiscard = false }) { Text("继续编辑") }
+            confirmButton = {},
+            dismissButton = {},
+        )
+    }
+
+    state.errorMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearError,
+            title = { Text("提示") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearError) { Text("确定") }
             },
         )
     }
@@ -107,7 +131,7 @@ fun EditorScreen(
                 actions = {
                     TextButton(
                         onClick = { viewModel.saveAndFinish() },
-                        enabled = !state.isSaving && state.name.isNotBlank(),
+                        enabled = state.canSave,
                     ) {
                         Text("保存")
                     }
@@ -129,15 +153,7 @@ fun EditorScreen(
                     .padding(padding),
             ) {
                 QuotePreview(
-                    state = WallpaperPreviewState(
-                        background = state.backgroundSpec,
-                        lines = state.texts.map { it.text },
-                        previewLineIndex = state.previewTextIndex,
-                        textStyle = state.textStyle,
-                        offsetX = state.offsetX,
-                        offsetY = state.offsetY,
-                        rotationDegrees = state.rotation,
-                    ),
+                    state = state.toPreviewInput(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -159,8 +175,8 @@ fun EditorScreen(
                     EditorTab.Time -> TimeTabContent(
                         startMinute = state.startMinute,
                         endMinute = state.endMinute,
-                        onStartChange = viewModel::setStartMinute,
-                        onEndChange = viewModel::setEndMinute,
+                        onStartIndexChange = viewModel::setStartHalfHourIndex,
+                        onEndIndexChange = viewModel::setEndHalfHourIndex,
                     )
                     EditorTab.Background -> BackgroundTabContent(
                         current = state.backgroundSpec,
@@ -215,30 +231,45 @@ private fun EditorTabBar(
     }
 }
 
+private fun EditorUiState.toPreviewInput(): QuoteRenderInput {
+    val quoteLines = texts.mapIndexed { index, entry ->
+        QuoteLine(id = entry.lineId, text = entry.text, displayOrder = index)
+    }
+    return QuoteRenderInput(
+        background = backgroundSpec,
+        lines = quoteLines,
+        previewLineIndex = previewTextIndex,
+        textStyle = textStyle,
+        transform = transform,
+    )
+}
+
 @Composable
 private fun TimeTabContent(
     startMinute: Int,
     endMinute: Int,
-    onStartChange: (Int) -> Unit,
-    onEndChange: (Int) -> Unit,
+    onStartIndexChange: (Int) -> Unit,
+    onEndIndexChange: (Int) -> Unit,
 ) {
+    val startIndex = halfHourIndexFromMinute(startMinute).toFloat()
+    val endIndex = halfHourIndexFromMinute(endMinute).toFloat()
     Column(modifier = Modifier.padding(16.dp)) {
         Text("开始：${formatMinuteOfDay(startMinute)}")
         Slider(
-            value = startMinute.toFloat(),
-            onValueChange = { onStartChange(it.toInt()) },
-            valueRange = 0f..1439f,
-            steps = 47,
+            value = startIndex,
+            onValueChange = { onStartIndexChange(it.toInt()) },
+            valueRange = 0f..(HALF_HOUR_SLOTS - 1).toFloat(),
+            steps = HALF_HOUR_SLOTS - 2,
         )
         Text("结束：${formatMinuteOfDay(endMinute)}")
         Slider(
-            value = endMinute.toFloat(),
-            onValueChange = { onEndChange(it.toInt()) },
-            valueRange = 0f..1439f,
-            steps = 47,
+            value = endIndex,
+            onValueChange = { onEndIndexChange(it.toInt()) },
+            valueRange = 0f..(HALF_HOUR_SLOTS - 1).toFloat(),
+            steps = HALF_HOUR_SLOTS - 2,
         )
         Text(
-            text = "起止相同表示全天有效。阶段一使用滑块（30 分钟对齐），非环形选择器。",
+            text = "起止相同表示全天有效。步长 30 分钟（00:00–23:30）。",
             style = MaterialTheme.typography.bodySmall,
         )
     }
@@ -291,11 +322,11 @@ private fun ContentTabContent(
                 .height(200.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            itemsIndexed(texts, key = { _, item -> item.localId }) { index, entry ->
+            itemsIndexed(texts, key = { _, item -> item.clientKey }) { index, entry ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = entry.text,
-                        onValueChange = { onUpdate(entry.localId, it) },
+                        onValueChange = { onUpdate(entry.clientKey, it) },
                         modifier = Modifier
                             .weight(1f)
                             .clickable { onSelectPreview(index) }
@@ -308,7 +339,7 @@ private fun ContentTabContent(
                             ),
                         label = { Text("名言 ${index + 1}") },
                     )
-                    IconButton(onClick = { onDelete(entry.localId) }) {
+                    IconButton(onClick = { onDelete(entry.clientKey) }) {
                         Icon(Icons.Default.Delete, contentDescription = "删除行")
                     }
                 }
@@ -351,6 +382,16 @@ private fun StyleTabContent(
                 FilterChip(
                     selected = style.alignment == align,
                     onClick = { onStyleChange { it.copy(alignment = align) } },
+                    label = { Text(label) },
+                )
+            }
+        }
+        Text("字体")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Serif" to "衬线", "SansSerif" to "无衬线", "Monospace" to "等宽").forEach { (id, label) ->
+                FilterChip(
+                    selected = style.fontFamilyName.equals(id, ignoreCase = true),
+                    onClick = { onStyleChange { it.copy(fontFamilyName = id) } },
                     label = { Text(label) },
                 )
             }
