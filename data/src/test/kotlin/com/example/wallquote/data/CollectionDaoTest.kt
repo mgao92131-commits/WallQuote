@@ -1,13 +1,14 @@
 package com.example.wallquote.data
 
 import android.content.Context
-import android.database.sqlite.SQLiteConstraintException
 import androidx.test.core.app.ApplicationProvider
 import androidx.room.Room
 import com.example.wallquote.data.local.AppDatabase
 import com.example.wallquote.data.local.CollectionDao
 import com.example.wallquote.data.local.CollectionEntity
 import com.example.wallquote.data.local.CollectionTextLineEntity
+import com.example.wallquote.data.local.SaveFailedException
+import com.example.wallquote.data.local.toEntity
 import com.example.wallquote.data.repository.CollectionRepositoryImpl
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CollectionConfig
@@ -60,20 +61,6 @@ class CollectionDaoTest {
         textStyle = TextStyleConfig(colorHex = "#FFFFFF"),
     )
 
-    private fun ghostCollectionEntity() = CollectionEntity(
-        id = 99_999,
-        name = "ghost",
-        startMinuteOfDay = 0,
-        endMinuteOfDay = 0,
-        backgroundType = "solid",
-        backgroundData = """{"colorHex":"#000000"}""",
-        textStyleData = "{}",
-        offsetX = 0.5f,
-        offsetY = 0.5f,
-        rotation = 0f,
-        sortOrder = 0,
-    )
-
     @Test
     fun upsertAndObserve() = runTest {
         val id = repository.upsertCollection(sampleConfig())
@@ -115,24 +102,27 @@ class CollectionDaoTest {
 
     @Test
     fun saveCollectionWithLines_rollsBackOnFkViolation() = runTest {
-        val beforeCount = dao.observeAllWithLines().first().size
+        // Insert succeeds first; orphan line update must fail and leave original intact.
+        val id = repository.upsertCollection(sampleConfig())
+        val before = repository.getCollection(id)!!
         try {
             dao.saveCollectionWithLines(
-                ghostCollectionEntity(),
+                before.toEntity(),
                 listOf(
                     CollectionTextLineEntity(
-                        id = 0,
-                        collectionId = 0,
+                        id = 777_777,
+                        collectionId = id,
                         text = "orphan",
                         displayOrder = 0,
                     ),
                 ),
             )
-            throw AssertionError("Expected FK failure")
-        } catch (_: SQLiteConstraintException) {
+            throw AssertionError("Expected SaveFailedException")
+        } catch (_: SaveFailedException) {
             // expected
         }
-        assertEquals(beforeCount, dao.observeAllWithLines().first().size)
+        val after = repository.getCollection(id)!!
+        assertEquals(before.lines.map { it.text }, after.lines.map { it.text })
     }
 
     @Test
@@ -142,5 +132,52 @@ class CollectionDaoTest {
         val names = repository.observeOrderedCollections().first().map { it.name }
         assertEquals(listOf("B", "A"), names)
         assertTrue(id1 < id2)
+    }
+
+    @Test
+    fun updateMissingCollectionFailsTransaction() = runTest {
+        try {
+            dao.saveCollectionWithLines(
+                CollectionEntity(
+                    id = 42,
+                    name = "missing",
+                    startMinuteOfDay = 0,
+                    endMinuteOfDay = 0,
+                    backgroundType = "solid",
+                    backgroundData = """{"type":"solid","colorHex":"#000000"}""",
+                    textStyleData = "{}",
+                    centerXFraction = 0.5f,
+                    centerYFraction = 0.5f,
+                    rotation = 0f,
+                    sortOrder = 0,
+                ),
+                emptyList(),
+            )
+            throw AssertionError("Expected SaveFailedException")
+        } catch (_: com.example.wallquote.data.local.SaveFailedException) {
+            // expected
+        }
+        assertTrue(dao.observeAllWithLines().first().isEmpty())
+    }
+
+    @Test
+    fun updateOrphanLineFailsAndRollsBack() = runTest {
+        val id = repository.upsertCollection(sampleConfig())
+        val loaded = repository.getCollection(id)!!
+        try {
+            repository.upsertCollection(
+                loaded.copy(
+                    lines = listOf(
+                        loaded.lines[0],
+                        QuoteLine(id = 999_999, text = "ghost", displayOrder = 1),
+                    ),
+                ),
+            )
+            throw AssertionError("Expected SaveFailedException")
+        } catch (_: Exception) {
+            // expected
+        }
+        val reloaded = repository.getCollection(id)!!
+        assertEquals(listOf("Line A", "Line B"), reloaded.lines.map { it.text })
     }
 }

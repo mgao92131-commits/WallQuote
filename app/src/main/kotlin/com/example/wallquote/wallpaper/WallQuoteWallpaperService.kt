@@ -1,8 +1,15 @@
 package com.example.wallquote.wallpaper
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
+import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.repository.CollectionRepository
+import com.example.wallquote.wallpaper.background.DefaultBackgroundImageLoader
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,10 +25,14 @@ class WallQuoteWallpaperService : WallpaperService() {
     @Inject
     lateinit var collectionRepository: CollectionRepository
 
-    override fun onCreateEngine(): Engine = WallQuoteEngine(collectionRepository)
+    @Inject
+    lateinit var backgroundAssetStore: BackgroundAssetStore
+
+    override fun onCreateEngine(): Engine = WallQuoteEngine(collectionRepository, backgroundAssetStore)
 
     inner class WallQuoteEngine(
         private val repository: CollectionRepository,
+        private val assetStore: BackgroundAssetStore,
     ) : Engine() {
 
         private val engineId = AndroidWallpaperDiagnostics.newEngineId()
@@ -30,22 +41,42 @@ class WallQuoteWallpaperService : WallpaperService() {
         private val scope = CoroutineScope(Dispatchers.Main.immediate + job)
         private val clock = AndroidClock()
         private lateinit var coordinator: WallpaperCoordinator
+        private var timeReceiverRegistered = false
+
+        private val timeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_TIME_CHANGED,
+                    Intent.ACTION_TIMEZONE_CHANGED,
+                    Intent.ACTION_DATE_CHANGED,
+                    -> coordinator.offer(WallpaperEvent.TimeOrZoneChanged)
+                }
+            }
+        }
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
             val renderer = CanvasWallpaperRenderer(
                 density = resources.displayMetrics.density,
+                fontScale = resources.configuration.fontScale,
                 diagnostics = diagnostics,
             )
             val scheduler = CoroutineBoundaryScheduler(scope)
+            val imageLoader = DefaultBackgroundImageLoader(
+                assetStore = assetStore,
+                diagnostics = diagnostics,
+            )
             coordinator = WallpaperCoordinator(
                 scope = scope,
                 clock = clock,
                 renderer = renderer,
                 boundaryScheduler = scheduler,
                 diagnostics = diagnostics,
+                imageLoader = imageLoader,
+                density = resources.displayMetrics.density,
             )
             coordinator.start()
+            registerTimeReceiver()
             scope.launch {
                 repository.observeOrderedCollections().collectLatest { collections ->
                     coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
@@ -74,10 +105,35 @@ class WallQuoteWallpaperService : WallpaperService() {
         }
 
         override fun onDestroy() {
-            coordinator.offer(WallpaperEvent.Destroy)
+            unregisterTimeReceiver()
+            if (::coordinator.isInitialized) {
+                coordinator.close()
+            }
             job.cancel()
             scope.cancel()
             super.onDestroy()
+        }
+
+        private fun registerTimeReceiver() {
+            if (timeReceiverRegistered) return
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_TIME_CHANGED)
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
+                addAction(Intent.ACTION_DATE_CHANGED)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                applicationContext.registerReceiver(timeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                applicationContext.registerReceiver(timeReceiver, filter)
+            }
+            timeReceiverRegistered = true
+        }
+
+        private fun unregisterTimeReceiver() {
+            if (!timeReceiverRegistered) return
+            runCatching { applicationContext.unregisterReceiver(timeReceiver) }
+            timeReceiverRegistered = false
         }
     }
 }

@@ -1,10 +1,13 @@
 package com.example.wallquote.di
 
+import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.repository.CollectionRepository
+import com.example.wallquote.domain.usecase.CleanupOrphanBackgroundAssetsUseCase
 import com.example.wallquote.domain.usecase.DeleteCollectionUseCase
 import com.example.wallquote.domain.usecase.GetCollectionUseCase
 import com.example.wallquote.domain.usecase.ObserveOrderedCollectionsUseCase
 import com.example.wallquote.domain.usecase.SaveCollectionUseCase
+import com.example.wallquote.domain.usecase.SaveCollectionWithBackgroundUseCase
 import com.example.wallquote.domain.usecase.SelectActiveCollectionsUseCase
 import dagger.Module
 import dagger.Provides
@@ -34,8 +37,26 @@ object DomainModule {
 
     @Provides
     @Singleton
-    fun provideDeleteCollectionUseCase(repository: CollectionRepository): DeleteCollectionUseCase =
-        DeleteCollectionUseCase(repository)
+    fun provideSaveCollectionWithBackgroundUseCase(
+        repository: CollectionRepository,
+        assetStore: BackgroundAssetStore,
+    ): SaveCollectionWithBackgroundUseCase =
+        SaveCollectionWithBackgroundUseCase(repository, assetStore)
+
+    @Provides
+    @Singleton
+    fun provideDeleteCollectionUseCase(
+        repository: CollectionRepository,
+        assetStore: BackgroundAssetStore,
+    ): DeleteCollectionUseCase = DeleteCollectionUseCase(repository, assetStore)
+
+    @Provides
+    @Singleton
+    fun provideCleanupOrphanBackgroundAssetsUseCase(
+        repository: CollectionRepository,
+        assetStore: BackgroundAssetStore,
+    ): CleanupOrphanBackgroundAssetsUseCase =
+        CleanupOrphanBackgroundAssetsUseCase(repository, assetStore)
 
     @Provides
     fun provideSelectActiveCollectionsUseCase(): SelectActiveCollectionsUseCase =

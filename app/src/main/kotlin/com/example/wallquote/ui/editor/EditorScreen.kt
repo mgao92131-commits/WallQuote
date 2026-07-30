@@ -1,7 +1,10 @@
 package com.example.wallquote.ui.editor
 
-import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,13 +17,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -45,18 +51,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wallquote.core.preview.QuotePreview
+import com.example.wallquote.core.preview.parseColorHex
+import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.QuoteLine
 import com.example.wallquote.domain.model.QuoteRenderInput
 import com.example.wallquote.domain.time.HALF_HOUR_SLOTS
 import com.example.wallquote.domain.time.halfHourIndexFromMinute
-import com.example.wallquote.core.preview.parseColorHex
-import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.ui.util.formatMinuteOfDay
-
-private val SolidBackgroundPresets = listOf(
-    "#000000" to "纯黑",
-    "#2E3440" to "暗夜紫",
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -157,6 +158,7 @@ fun EditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
+                    resolvedPhotoPath = state.resolvedPhotoPath,
                 )
                 OutlinedTextField(
                     value = state.name,
@@ -179,8 +181,31 @@ fun EditorScreen(
                         onEndIndexChange = viewModel::setEndHalfHourIndex,
                     )
                     EditorTab.Background -> BackgroundTabContent(
-                        current = state.backgroundSpec,
+                        state = state,
                         onSolidSelected = viewModel::setSolidBackground,
+                        onSelectSolidKind = {
+                            viewModel.setSolidBackground(
+                                (state.backgroundSpec as? BackgroundSpec.Solid)?.colorHex
+                                    ?: "#2E3440",
+                            )
+                        },
+                        onSelectGradientKind = {
+                            val g = state.backgroundSpec as? BackgroundSpec.Gradient
+                            viewModel.setGradientBackground(
+                                startHex = g?.startColorHex ?: "#2E3440",
+                                endHex = g?.endColorHex ?: "#5E81AC",
+                                angleDegrees = g?.angleDegrees ?: 90f,
+                            )
+                        },
+                        onSelectPhotoKind = viewModel::selectPhotoKind,
+                        onGradientChange = viewModel::updateGradient,
+                        onSwapGradient = viewModel::swapGradientColors,
+                        onPickPhoto = viewModel::onPhotoPickerLaunched,
+                        onPickCancelled = viewModel::onPhotoPickerCancelled,
+                        onPhotoPicked = viewModel::importPickedPhoto,
+                        onDimChange = viewModel::setPhotoDim,
+                        onBlurChange = viewModel::setPhotoBlur,
+                        onRemovePhoto = viewModel::removePhoto,
                     )
                     EditorTab.Content -> ContentTabContent(
                         texts = state.texts,
@@ -275,32 +300,185 @@ private fun TimeTabContent(
     }
 }
 
+private val SolidBackgroundPresets = listOf(
+    "#000000" to "纯黑",
+    "#2E3440" to "暗夜紫",
+    "#3B4252" to "灰蓝",
+    "#BF616A" to "赤陶",
+)
+
+private val GradientPresets = listOf(
+    Triple("#2E3440", "#5E81AC", 90f),
+    Triple("#BF616A", "#EBCB8B", 45f),
+    Triple("#A3BE8C", "#88C0D0", 135f),
+)
+
 @Composable
 private fun BackgroundTabContent(
-    current: BackgroundSpec,
+    state: EditorUiState,
     onSolidSelected: (String) -> Unit,
+    onSelectSolidKind: () -> Unit,
+    onSelectGradientKind: () -> Unit,
+    onSelectPhotoKind: () -> Unit,
+    onGradientChange: (startHex: String?, endHex: String?, angleDegrees: Float?) -> Unit,
+    onSwapGradient: () -> Unit,
+    onPickPhoto: () -> Unit,
+    onPickCancelled: () -> Unit,
+    onPhotoPicked: (String) -> Unit,
+    onDimChange: (Float) -> Unit,
+    onBlurChange: (Float) -> Unit,
+    onRemovePhoto: () -> Unit,
 ) {
-    val currentHex = (current as? BackgroundSpec.Solid)?.colorHex
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text("纯色背景")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SolidBackgroundPresets.forEach { (hex, label) ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .height(48.dp)
-                            .fillMaxWidth(0.2f)
-                            .clip(CircleShape)
-                            .background(parseColorHex(hex))
-                            .border(
-                                width = if (currentHex == hex) 3.dp else 1.dp,
-                                color = MaterialTheme.colorScheme.primary,
-                                shape = CircleShape,
+    val photoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) {
+            onPickCancelled()
+        } else {
+            onPhotoPicked(uri.toString())
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = state.backgroundKind == BackgroundKind.Solid,
+                onClick = onSelectSolidKind,
+                label = { Text("纯色") },
+            )
+            FilterChip(
+                selected = state.backgroundKind == BackgroundKind.Gradient,
+                onClick = onSelectGradientKind,
+                label = { Text("渐变") },
+            )
+            FilterChip(
+                selected = state.backgroundKind == BackgroundKind.Photo,
+                onClick = onSelectPhotoKind,
+                label = { Text("图片") },
+            )
+        }
+
+        when (val bg = state.backgroundSpec) {
+            is BackgroundSpec.Solid -> {
+                Text("预设颜色")
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SolidBackgroundPresets.forEach { (hex, label) ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .fillMaxWidth(0.2f)
+                                    .clip(CircleShape)
+                                    .background(parseColorHex(hex))
+                                    .border(
+                                        width = if (bg.colorHex.equals(hex, ignoreCase = true)) 3.dp else 1.dp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        shape = CircleShape,
+                                    )
+                                    .clickable { onSolidSelected(hex) },
                             )
-                            .clickable { onSolidSelected(hex) },
-                    )
-                    Text(label, style = MaterialTheme.typography.labelSmall)
+                            Text(label, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
+            }
+            is BackgroundSpec.Gradient -> {
+                Text("渐变预设")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GradientPresets.forEach { (start, end, angle) ->
+                        Box(
+                            modifier = Modifier
+                                .height(40.dp)
+                                .weight(1f)
+                                .clip(CircleShape)
+                                .background(
+                                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                        listOf(parseColorHex(start), parseColorHex(end)),
+                                    ),
+                                )
+                                .clickable {
+                                    onGradientChange(start, end, angle)
+                                },
+                        )
+                    }
+                }
+                Text("起始 / 结束颜色")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        bg.startColorHex to true,
+                        bg.endColorHex to false,
+                    ).forEach { (hex, isStart) ->
+                        SolidBackgroundPresets.take(4).forEach { (preset, _) ->
+                            Box(
+                                modifier = Modifier
+                                    .height(28.dp)
+                                    .weight(1f)
+                                    .clip(CircleShape)
+                                    .background(parseColorHex(preset))
+                                    .border(
+                                        width = if (hex.equals(preset, true)) 2.dp else 0.dp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        shape = CircleShape,
+                                    )
+                                    .clickable {
+                                        if (isStart) onGradientChange(preset, null, null)
+                                        else onGradientChange(null, preset, null)
+                                    },
+                            )
+                        }
+                    }
+                }
+                TextButton(onClick = onSwapGradient) { Text("交换颜色") }
+                Text("角度：${bg.angleDegrees.toInt()}°")
+                Slider(
+                    value = bg.angleDegrees,
+                    onValueChange = { onGradientChange(null, null, it) },
+                    valueRange = 0f..360f,
+                )
+            }
+            is BackgroundSpec.Photo -> {
+                when (val photoState = state.photoEditorState) {
+                    PhotoEditorState.Importing -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.height(24.dp))
+                            Text("正在导入图片…", modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                    is PhotoEditorState.Failed -> Text(photoState.message)
+                    else -> Unit
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            onPickPhoto()
+                            photoPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                    ) {
+                        Text(if (state.resolvedPhotoPath == null) "选择图片" else "替换图片")
+                    }
+                    if (state.resolvedPhotoPath != null || state.stagedBackground != null) {
+                        TextButton(onClick = onRemovePhoto) { Text("移除") }
+                    }
+                }
+                Text("暗化：${(bg.dimAmount * 100).toInt()}%")
+                Slider(
+                    value = bg.dimAmount,
+                    onValueChange = onDimChange,
+                    valueRange = 0f..1f,
+                )
+                Text("模糊：${bg.blurRadiusDp.toInt()} dp")
+                Slider(
+                    value = bg.blurRadiusDp,
+                    onValueChange = onBlurChange,
+                    valueRange = 0f..25f,
+                )
             }
         }
     }

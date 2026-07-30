@@ -14,8 +14,8 @@ data class CollectionEntity(
     val backgroundType: String,
     val backgroundData: String,
     val textStyleData: String,
-    val offsetX: Float,
-    val offsetY: Float,
+    val centerXFraction: Float,
+    val centerYFraction: Float,
     val rotation: Float,
     val sortOrder: Int,
 )

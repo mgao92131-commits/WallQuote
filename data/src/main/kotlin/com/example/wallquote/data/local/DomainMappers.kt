@@ -27,8 +27,8 @@ fun CollectionWithLines.toDomain(): CollectionConfig {
         lines = quoteLines,
         textStyle = style,
         transform = QuoteTransform(
-            centerXFraction = collection.offsetX,
-            centerYFraction = collection.offsetY,
+            centerXFraction = collection.centerXFraction,
+            centerYFraction = collection.centerYFraction,
             rotationDegrees = collection.rotation,
         ),
         sortOrder = collection.sortOrder,
@@ -45,8 +45,8 @@ fun CollectionConfig.toEntity(): CollectionEntity {
         backgroundType = type,
         backgroundData = data,
         textStyleData = textStyle.toJson(),
-        offsetX = transform.centerXFraction,
-        offsetY = transform.centerYFraction,
+        centerXFraction = transform.centerXFraction,
+        centerYFraction = transform.centerYFraction,
         rotation = transform.rotationDegrees,
         sortOrder = sortOrder,
     )

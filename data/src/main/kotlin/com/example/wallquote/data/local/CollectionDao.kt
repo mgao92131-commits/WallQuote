@@ -18,6 +18,8 @@ data class CollectionWithLines(
     val lines: List<CollectionTextLineEntity>,
 )
 
+class SaveFailedException(message: String) : IllegalStateException(message)
+
 @Dao
 interface CollectionDao {
     @Transaction
@@ -32,13 +34,24 @@ interface CollectionDao {
     suspend fun insertCollection(entity: CollectionEntity): Long
 
     @Update
-    suspend fun updateCollection(entity: CollectionEntity)
+    suspend fun updateCollection(entity: CollectionEntity): Int
 
     @Insert
     suspend fun insertLine(line: CollectionTextLineEntity): Long
 
-    @Update
-    suspend fun updateLine(line: CollectionTextLineEntity)
+    @Query(
+        """
+        UPDATE collection_text_lines
+        SET text = :text, displayOrder = :displayOrder
+        WHERE id = :id AND collectionId = :collectionId
+        """,
+    )
+    suspend fun updateOwnedLine(
+        id: Long,
+        collectionId: Long,
+        text: String,
+        displayOrder: Int,
+    ): Int
 
     @Query("SELECT id FROM collection_text_lines WHERE collectionId = :collectionId")
     suspend fun getLineIdsForCollection(collectionId: Long): List<Long>
@@ -65,7 +78,10 @@ interface CollectionDao {
         val id = if (collection.id == 0L) {
             insertCollection(collection)
         } else {
-            updateCollection(collection)
+            val updated = updateCollection(collection)
+            if (updated != 1) {
+                throw SaveFailedException("Collection ${collection.id} was not updated (rows=$updated)")
+            }
             collection.id
         }
 
@@ -81,7 +97,17 @@ interface CollectionDao {
             if (row.id == 0L) {
                 insertLine(row)
             } else {
-                updateLine(row)
+                val updated = updateOwnedLine(
+                    id = row.id,
+                    collectionId = id,
+                    text = row.text,
+                    displayOrder = row.displayOrder,
+                )
+                if (updated != 1) {
+                    throw SaveFailedException(
+                        "Quote line ${row.id} was not updated for collection $id (rows=$updated)",
+                    )
+                }
             }
         }
         return id

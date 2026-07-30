@@ -45,17 +45,17 @@
 
 ## P1 增强需求
 
-- 渐变背景（`BackgroundSpec.Gradient`）。
-- 自定义图片背景（`BackgroundSpec.Photo`）、Coil 加载、dim/blur。
+- ~~渐变背景（`BackgroundSpec.Gradient`）。~~ **Phase 3 已实现**
+- ~~自定义图片背景（`BackgroundSpec.Photo`）、Coil 加载、dim/blur。~~ **Phase 3 已实现**（私有 assetId，非外部 URI）
 - 预设背景与默认名言首次启动种子数据。
 - 预设文字样式网格与用户自定义样式 CRUD（`custom_styles` 表 UI）。
 - 自定义样式全参数编辑器（边框、阴影、文字背景块、竖排等）。
-- 编辑器内拖动/旋转手势变换 `offsetX/Y`、`rotation`。
+- 编辑器内拖动/旋转手势变换（归一化 `QuoteTransform`）。
 - 环形时间选择器（30 分钟步长）。
 - 主页卡片时间轴可视化、SwipeToDismiss。
-- 「设为壁纸」入口与壁纸选择器集成。
+- ~~「设为壁纸」入口与壁纸选择器集成。~~ **Phase 2 已实现**
 - `AutoStyleMatcher` / `BackgroundSampler`。
-- 壁纸：`WallpaperSessionController` 轮播、`FadeTransitionController`、`WallpaperTriggerObserver`。
+- 壁纸淡入淡出动画（`FadeTransitionController`）。
 - `FontResolver` 含应用内打包字体（若许可证明确）。
 - Palette KTX 色彩提取。
 - 存储权限（API 33+ `READ_MEDIA_IMAGES` 等）。

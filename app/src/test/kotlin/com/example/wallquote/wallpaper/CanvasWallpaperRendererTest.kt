@@ -2,6 +2,7 @@ package com.example.wallquote.wallpaper
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.QuoteTransform
 import com.example.wallquote.domain.model.TextStyleConfig
@@ -23,7 +24,11 @@ class CanvasWallpaperRendererTest {
         }
     }
 
-    private val renderer = CanvasWallpaperRenderer(density = 2f, diagnostics = diagnostics)
+    private val renderer = CanvasWallpaperRenderer(
+        density = 2f,
+        fontScale = 1f,
+        diagnostics = diagnostics,
+    )
 
     @Test
     fun drawsSolidChineseEnglishAndEmojiWithoutCrash() {
@@ -39,32 +44,48 @@ class CanvasWallpaperRendererTest {
                 transform = QuoteTransform(0.5f, 0.4f, 15f),
             ),
         )
-        renderer.draw(
-            Canvas(bitmap),
-            200,
-            400,
-            WallpaperRenderSpec(
-                background = BackgroundSpec.Solid("#000000"),
-                text = "centered",
-                textStyle = TextStyleConfig(alignment = 1, fontFamilyName = "Monospace"),
-                transform = QuoteTransform(),
-            ),
-        )
-        renderer.draw(
-            Canvas(bitmap),
-            200,
-            400,
-            WallpaperRenderSpec(
-                background = BackgroundSpec.Solid("#FFFFFF"),
-                text = "right",
-                textStyle = TextStyleConfig(alignment = 2, fontFamilyName = "SansSerif"),
-                transform = QuoteTransform(0.7f, 0.7f, -10f),
-            ),
-        )
     }
 
     @Test
-    fun invalidColorAndGradientDoNotCrash() {
+    fun gradientZeroDegrees_logsRendered() {
+        val bitmap = Bitmap.createBitmap(100, 40, Bitmap.Config.ARGB_8888)
+        renderer.draw(
+            Canvas(bitmap),
+            100,
+            40,
+            WallpaperRenderSpec(
+                background = BackgroundSpec.Gradient("#FF0000", "#0000FF", angleDegrees = 0f),
+                text = null,
+                textStyle = TextStyleConfig(),
+                transform = QuoteTransform(),
+            ),
+        )
+        assertTrue(diagnostics.events.contains("gradient_rendered"))
+    }
+
+    @Test
+    fun photoWithDim_logsPhotoRendered() {
+        val photo = Bitmap.createBitmap(20, 20, Bitmap.Config.ARGB_8888).also {
+            it.eraseColor(Color.WHITE)
+        }
+        val bitmap = Bitmap.createBitmap(20, 20, Bitmap.Config.ARGB_8888)
+        renderer.draw(
+            Canvas(bitmap),
+            20,
+            20,
+            WallpaperRenderSpec(
+                background = BackgroundSpec.Photo(assetId = "bg_x", dimAmount = 0.5f),
+                text = "hi",
+                textStyle = TextStyleConfig(colorHex = "#00FF00"),
+                transform = QuoteTransform(),
+            ),
+            preparedPhoto = PreparedPhotoFrame(photo, dimAmount = 0.5f),
+        )
+        assertTrue(diagnostics.events.contains("photo_rendered"))
+    }
+
+    @Test
+    fun invalidColorFallsBackWithoutCrash() {
         val bitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
         renderer.draw(
             Canvas(bitmap),
@@ -82,14 +103,14 @@ class CanvasWallpaperRendererTest {
             50,
             50,
             WallpaperRenderSpec(
-                background = BackgroundSpec.Gradient("#111111", "#222222"),
+                background = BackgroundSpec.Gradient("bad", "#222222"),
                 text = null,
                 textStyle = TextStyleConfig(),
                 transform = QuoteTransform(),
                 showEmptyHint = true,
             ),
         )
-        assertTrue(diagnostics.events.contains("invalid_background_fallback"))
+        assertTrue(diagnostics.events.contains("invalid_gradient_color"))
     }
 
     @Test

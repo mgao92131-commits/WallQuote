@@ -26,11 +26,17 @@ class WallpaperCoordinatorTest {
     private val fakeHolder: SurfaceHolder = mock(SurfaceHolder::class.java)
 
     private class FakeClock(
-        var millis: Long = 0L,
+        var elapsed: Long = 0L,
+        var wall: Long = 0L,
         var minute: Int = 0,
+        var second: Int = 0,
+        var millis: Int = 0,
     ) : WallpaperClock {
-        override fun nowMillis(): Long = millis
+        override fun elapsedRealtimeMillis(): Long = elapsed
+        override fun currentWallTimeMillis(): Long = wall
         override fun minuteOfDay(): Int = minute
+        override fun secondOfMinute(): Int = second
+        override fun millisOfSecond(): Int = millis
     }
 
     private class FakeRenderer : WallpaperRenderTarget {
@@ -45,6 +51,7 @@ class WallpaperCoordinatorTest {
             surfaceHeight: Int,
             renderSpec: WallpaperRenderSpec,
             surfaceGeneration: Long,
+            preparedPhoto: PreparedPhotoFrame?,
         ): RenderOutcome {
             concurrent++
             maxConcurrent = maxOf(maxConcurrent, concurrent)
@@ -114,7 +121,7 @@ class WallpaperCoordinatorTest {
     }
 
     private fun TestScope.finish(coordinator: WallpaperCoordinator) {
-        coordinator.offer(WallpaperEvent.Destroy)
+        coordinator.close()
         advanceUntilIdle()
     }
 
@@ -140,7 +147,7 @@ class WallpaperCoordinatorTest {
 
     @Test
     fun shortHideDoesNotAdvance() = runTest(UnconfinedTestDispatcher()) {
-        val clock = FakeClock(millis = 0)
+        val clock = FakeClock(elapsed = 0)
         val renderer = FakeRenderer()
         val coordinator = createCoordinator(clock, renderer)
         val collections = listOf(
@@ -153,7 +160,7 @@ class WallpaperCoordinatorTest {
         advanceUntilIdle()
 
         coordinator.offer(WallpaperEvent.VisibilityChanged(false))
-        clock.millis = 29_000
+        clock.elapsed = 29_000
         coordinator.offer(WallpaperEvent.VisibilityChanged(true))
         advanceUntilIdle()
 
@@ -163,7 +170,7 @@ class WallpaperCoordinatorTest {
 
     @Test
     fun longHideAdvancesOnce() = runTest(UnconfinedTestDispatcher()) {
-        val clock = FakeClock(millis = 0)
+        val clock = FakeClock(elapsed = 0)
         val renderer = FakeRenderer()
         val coordinator = createCoordinator(clock, renderer)
         val collections = listOf(
@@ -176,7 +183,7 @@ class WallpaperCoordinatorTest {
         advanceUntilIdle()
 
         coordinator.offer(WallpaperEvent.VisibilityChanged(false))
-        clock.millis = 30_000
+        clock.elapsed = 30_000
         coordinator.offer(WallpaperEvent.VisibilityChanged(true))
         advanceUntilIdle()
 
@@ -186,7 +193,7 @@ class WallpaperCoordinatorTest {
 
     @Test
     fun screenOnDoesNotAdvanceEvenWithVisibility() = runTest(UnconfinedTestDispatcher()) {
-        val clock = FakeClock(millis = 0)
+        val clock = FakeClock(elapsed = 0)
         val renderer = FakeRenderer()
         val coordinator = createCoordinator(clock, renderer)
         val collections = listOf(
@@ -199,7 +206,7 @@ class WallpaperCoordinatorTest {
         advanceUntilIdle()
 
         coordinator.offer(WallpaperEvent.VisibilityChanged(false))
-        clock.millis = 31_000
+        clock.elapsed = 31_000
         coordinator.offer(WallpaperEvent.ScreenOn)
         coordinator.offer(WallpaperEvent.VisibilityChanged(true))
         advanceUntilIdle()
@@ -279,7 +286,7 @@ class WallpaperCoordinatorTest {
         advanceUntilIdle()
         val before = renderer.renderCount
 
-        coordinator.offer(WallpaperEvent.Destroy)
+        coordinator.close()
         advanceUntilIdle()
         coordinator.offer(
             WallpaperEvent.CollectionsChanged(

@@ -1,5 +1,6 @@
 package com.example.wallquote.ui.editor
 
+import com.example.wallquote.domain.background.StagedBackgroundAsset
 import com.example.wallquote.domain.editor.EditorDraft
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.QuoteTransform
@@ -10,6 +11,24 @@ enum class EditorTab {
     Background,
     Content,
     Style,
+}
+
+enum class BackgroundKind {
+    Solid,
+    Gradient,
+    Photo,
+}
+
+sealed interface PhotoEditorState {
+    data object Empty : PhotoEditorState
+    data object Picking : PhotoEditorState
+    data object Importing : PhotoEditorState
+    data class Ready(
+        val previewPath: String?,
+        val isStaging: Boolean,
+    ) : PhotoEditorState
+
+    data class Failed(val message: String) : PhotoEditorState
 }
 
 data class EditorTextEntry(
@@ -35,9 +54,21 @@ data class EditorUiState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val errorMessage: String? = null,
+    val draftId: String = "",
+    val stagedBackground: StagedBackgroundAsset? = null,
+    val photoEditorState: PhotoEditorState = PhotoEditorState.Empty,
+    val resolvedPhotoPath: String? = null,
 ) {
     val canSave: Boolean
-        get() = name.isNotBlank() && texts.any { it.text.isNotBlank() } && !isSaving
+        get() = name.isNotBlank() && texts.any { it.text.isNotBlank() } && !isSaving &&
+            photoEditorState !is PhotoEditorState.Importing
+
+    val backgroundKind: BackgroundKind
+        get() = when (backgroundSpec) {
+            is BackgroundSpec.Solid -> BackgroundKind.Solid
+            is BackgroundSpec.Gradient -> BackgroundKind.Gradient
+            is BackgroundSpec.Photo -> BackgroundKind.Photo
+        }
 
     fun toDraft(): EditorDraft =
         EditorDraft(

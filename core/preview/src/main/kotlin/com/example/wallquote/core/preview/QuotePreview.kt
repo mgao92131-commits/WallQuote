@@ -5,13 +5,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -21,39 +25,93 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
+import com.example.wallquote.domain.background.GradientGeometryCalculator
 import com.example.wallquote.domain.layout.QuoteLayoutCalculator
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.QuoteRenderInput
+import java.io.File
 import kotlin.math.roundToInt
 
 @Composable
 fun QuotePreview(
     state: QuoteRenderInput,
     modifier: Modifier = Modifier,
+    resolvedPhotoPath: String? = null,
 ) {
-    val backgroundColor = when (val bg = state.background) {
-        is BackgroundSpec.Solid -> parseColorHex(bg.colorHex)
-        is BackgroundSpec.Gradient -> parseColorHex(bg.startColorHex)
-        is BackgroundSpec.Photo -> Color.Black
-    }
-
-    val textAlign = when (state.textStyle.alignment) {
-        0 -> TextAlign.Start
-        2 -> TextAlign.End
-        else -> TextAlign.Center
-    }
-
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .background(backgroundColor),
-    ) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val widthPx = with(density) { maxWidth.toPx() }.roundToInt()
-        val heightPx = with(density) { maxHeight.toPx() }.roundToInt()
+        val widthPx = with(density) { maxWidth.toPx() }
+        val heightPx = with(density) { maxHeight.toPx() }
+
+        when (val bg = state.background) {
+            is BackgroundSpec.Solid -> {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(parseColorHex(bg.colorHex)),
+                )
+            }
+            is BackgroundSpec.Gradient -> {
+                val geometry = GradientGeometryCalculator.calculate(
+                    width = widthPx,
+                    height = heightPx,
+                    angleDegrees = bg.angleDegrees,
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    parseColorHex(bg.startColorHex),
+                                    parseColorHex(bg.endColorHex),
+                                ),
+                                start = Offset(geometry.startX, geometry.startY),
+                                end = Offset(geometry.endX, geometry.endY),
+                            ),
+                        ),
+                )
+            }
+            is BackgroundSpec.Photo -> {
+                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                    val path = resolvedPhotoPath
+                    if (path != null) {
+                        AsyncImage(
+                            model = File(path),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .then(
+                                    if (bg.blurRadiusDp > 0f) {
+                                        Modifier.blur(bg.blurRadiusDp.dp)
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    val dim = bg.dimAmount.coerceIn(0f, 1f)
+                    if (dim > 0f) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = dim)),
+                        )
+                    }
+                }
+            }
+        }
+
+        val textAlign = when (state.textStyle.alignment) {
+            0 -> TextAlign.Start
+            2 -> TextAlign.End
+            else -> TextAlign.Center
+        }
         val layout = QuoteLayoutCalculator.calculate(
-            surfaceWidth = widthPx,
-            surfaceHeight = heightPx,
+            surfaceWidth = widthPx.roundToInt(),
+            surfaceHeight = heightPx.roundToInt(),
             transform = state.transform,
         )
         Box(
@@ -61,8 +119,8 @@ fun QuotePreview(
                 .fillMaxSize()
                 .offset {
                     IntOffset(
-                        x = layout.centerX.roundToInt() - widthPx / 2,
-                        y = layout.centerY.roundToInt() - heightPx / 2,
+                        x = layout.centerX.roundToInt() - widthPx.roundToInt() / 2,
+                        y = layout.centerY.roundToInt() - heightPx.roundToInt() / 2,
                     )
                 },
             contentAlignment = Alignment.Center,
@@ -70,7 +128,7 @@ fun QuotePreview(
             Text(
                 text = state.previewText,
                 modifier = Modifier
-                    .widthIn(max = with(density) { layout.maxTextWidth.toDp() })
+                    .width(with(density) { layout.maxTextWidth.toDp() })
                     .rotate(layout.rotationDegrees),
                 style = TextStyle(
                     color = parseColorHex(state.textStyle.colorHex).copy(alpha = state.textStyle.textAlpha),

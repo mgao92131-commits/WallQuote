@@ -2,9 +2,12 @@ package com.example.wallquote.data.di
 
 import android.content.Context
 import androidx.room.Room
+import com.example.wallquote.data.background.FileBackgroundAssetStore
 import com.example.wallquote.data.local.AppDatabase
 import com.example.wallquote.data.local.CollectionDao
+import com.example.wallquote.data.local.MIGRATION_1_2
 import com.example.wallquote.data.repository.CollectionRepositoryImpl
+import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.repository.CollectionRepository
 import dagger.Binds
 import dagger.Module
@@ -21,7 +24,9 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
-        Room.databaseBuilder(context, AppDatabase::class.java, "wallquote.db").build()
+        Room.databaseBuilder(context, AppDatabase::class.java, "wallquote.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
 
     @Provides
     fun provideCollectionDao(db: AppDatabase): CollectionDao = db.collectionDao()
@@ -34,4 +39,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindCollectionRepository(impl: CollectionRepositoryImpl): CollectionRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindBackgroundAssetStore(impl: FileBackgroundAssetStore): BackgroundAssetStore
 }

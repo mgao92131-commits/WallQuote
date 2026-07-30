@@ -2,6 +2,8 @@ package com.example.wallquote.wallpaper
 
 import android.view.SurfaceHolder
 import com.example.wallquote.domain.model.CollectionConfig
+import com.example.wallquote.wallpaper.background.BackgroundImageResult
+import com.example.wallquote.wallpaper.background.BackgroundLoadToken
 
 sealed interface WallpaperEvent {
     data class SurfaceCreated(val holder: SurfaceHolder) : WallpaperEvent
@@ -19,5 +21,11 @@ sealed interface WallpaperEvent {
 
     data object ScreenOn : WallpaperEvent
     data object ScheduleBoundaryReached : WallpaperEvent
+    data object TimeOrZoneChanged : WallpaperEvent
     data object Destroy : WallpaperEvent
+
+    data class BackgroundLoadCompleted(
+        val token: BackgroundLoadToken,
+        val result: BackgroundImageResult,
+    ) : WallpaperEvent
 }

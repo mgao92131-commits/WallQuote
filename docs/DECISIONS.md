@@ -75,6 +75,21 @@ Phase 1 不展示。Phase 2 起展示「设为壁纸」：优先 `ACTION_CHANGE_
 
 无收藏集或无有效游标时：绘制默认纯色 `#2E3440`；无收藏集时显示短提示「打开「壁上言」添加内容」。当前时间无有效收藏集时不回退到无效集合（计划语义优先）。
 
-## D-017 Phase 2 模块边界（2026-07-30）
+## D-018 Phase 2.1 验收修复（2026-07-30）
 
-播放决策在 `:domain`（`PlaybackController` / `PlaybackReconciler` / `ScheduleBoundaryCalculator`）。`WallpaperCoordinator` 单 Channel 事件循环；`CanvasWallpaperRenderer` 只绘制。不新增 Gradle 模块。`QuoteLayoutCalculator` 为 Compose 与 Canvas 共享布局规则。
+- 编辑器未保存行使用**负数** `clientKey`，已保存行使用正数 DB id，避免碰撞。
+- Room **version 2**：`offsetX/Y` 重命名为 `centerXFraction/centerYFraction`，迁移时一律重置为 `0.5`（Phase 1 的 `0` 表示居中，不能按分数语义直读）。
+- Compose 预览使用与 Canvas 相同的**固定文字宽度**（`surfaceWidth × 0.84`）。
+- Canvas 字号使用 `density * fontScale`（与 Compose `sp` 一致，避免废弃的 `scaledDensity` 字段）。
+- 隐藏时长用 `elapsedRealtime`；日程边界用墙钟秒级精度；监听 `TIME_CHANGED` / `TIMEZONE_CHANGED` / `DATE_CHANGED`。
+- `@Update` 校验影响行数；名言行 UPDATE 带 `collectionId` 归属条件。
+- `WallpaperCoordinator.close()` 同步销毁，Service 不再依赖异步 Destroy 事件。
+
+## D-019 Phase 3 背景资产（2026-07-30）
+
+- `BackgroundSpec.Photo` 使用内部 `assetId`，**不**持久化外部 `content://` URI；不申请 `READ_MEDIA_IMAGES` / `READ_EXTERNAL_STORAGE`。
+- 正式文件在 `files/backgrounds/`；编辑临时文件在 `cache/background_staging/`。
+- 本阶段**不**建 `background_assets` 表；元数据由文件系统读取。
+- 渐变角度：0° 左→右，顺时针增加；Compose / Canvas 共用 `GradientGeometryCalculator`。
+- Center Crop / Dim 共用计算器；Dim 不进缓存 Key；Blur（0–25dp）在解码后异步处理并纳入缓存 Key。
+- 壁纸图片经 `BackgroundImageLoader` 异步加载，`BackgroundLoadToken` 校验防过期覆盖。

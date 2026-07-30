@@ -1,14 +1,19 @@
 package com.example.wallquote.wallpaper
 
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.view.SurfaceHolder
 import com.example.wallquote.domain.CollectionDefaults
+import com.example.wallquote.domain.background.BackgroundValidation
+import com.example.wallquote.domain.background.GradientGeometryCalculator
 import com.example.wallquote.domain.layout.QuoteLayoutCalculator
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.TextStyleConfig
@@ -16,6 +21,7 @@ import com.example.wallquote.domain.model.WallpaperRenderSpec
 
 class CanvasWallpaperRenderer(
     private val density: Float,
+    private val fontScale: Float,
     private val diagnostics: WallpaperDiagnostics,
 ) : WallpaperRenderTarget {
 
@@ -25,6 +31,7 @@ class CanvasWallpaperRenderer(
         surfaceHeight: Int,
         renderSpec: WallpaperRenderSpec,
         surfaceGeneration: Long,
+        preparedPhoto: PreparedPhotoFrame?,
     ): RenderOutcome {
         if (holder == null || surfaceWidth <= 0 || surfaceHeight <= 0) {
             return RenderOutcome.Skipped
@@ -50,7 +57,7 @@ class CanvasWallpaperRenderer(
                 diagnostics.log("canvas_lock_failed", mapOf("gen" to surfaceGeneration))
                 RenderOutcome.Failed("lock_null")
             } else {
-                draw(canvas, surfaceWidth, surfaceHeight, renderSpec)
+                draw(canvas, surfaceWidth, surfaceHeight, renderSpec, preparedPhoto)
                 diagnostics.log("render_completed", mapOf("gen" to surfaceGeneration))
                 RenderOutcome.Success
             }
@@ -76,8 +83,9 @@ class CanvasWallpaperRenderer(
         surfaceWidth: Int,
         surfaceHeight: Int,
         renderSpec: WallpaperRenderSpec,
+        preparedPhoto: PreparedPhotoFrame? = null,
     ) {
-        canvas.drawColor(resolveBackgroundColor(renderSpec.background))
+        drawBackground(canvas, surfaceWidth, surfaceHeight, renderSpec.background, preparedPhoto)
         val text = renderSpec.text
         if (text.isNullOrBlank()) {
             if (renderSpec.showEmptyHint) {
@@ -86,6 +94,72 @@ class CanvasWallpaperRenderer(
             return
         }
         drawQuote(canvas, surfaceWidth, surfaceHeight, text, renderSpec.textStyle, renderSpec)
+    }
+
+    private fun drawBackground(
+        canvas: Canvas,
+        width: Int,
+        height: Int,
+        background: BackgroundSpec,
+        preparedPhoto: PreparedPhotoFrame?,
+    ) {
+        when (background) {
+            is BackgroundSpec.Solid -> {
+                canvas.drawColor(parseColor(background.colorHex, DEFAULT_BG))
+            }
+            is BackgroundSpec.Gradient -> {
+                val start = parseColorOrNull(background.startColorHex)
+                val end = parseColorOrNull(background.endColorHex)
+                if (start == null || end == null) {
+                    diagnostics.log("invalid_gradient_color")
+                    canvas.drawColor(DEFAULT_BG)
+                    return
+                }
+                val geometry = GradientGeometryCalculator.calculate(
+                    width = width.toFloat(),
+                    height = height.toFloat(),
+                    angleDegrees = background.angleDegrees,
+                )
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = LinearGradient(
+                        geometry.startX,
+                        geometry.startY,
+                        geometry.endX,
+                        geometry.endY,
+                        start,
+                        end,
+                        Shader.TileMode.CLAMP,
+                    )
+                }
+                canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+                diagnostics.log("gradient_rendered", mapOf("angle" to background.angleDegrees))
+            }
+            is BackgroundSpec.Photo -> {
+                val bitmap = preparedPhoto?.bitmap
+                if (bitmap != null && !bitmap.isRecycled) {
+                    drawPhoto(canvas, width, height, bitmap, preparedPhoto.dimAmount)
+                    diagnostics.log("photo_rendered", mapOf("assetId" to background.assetId))
+                } else {
+                    canvas.drawColor(DEFAULT_BG)
+                }
+            }
+        }
+    }
+
+    private fun drawPhoto(
+        canvas: Canvas,
+        width: Int,
+        height: Int,
+        bitmap: Bitmap,
+        dimAmount: Float,
+    ) {
+        val src = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
+        val dst = android.graphics.Rect(0, 0, width, height)
+        canvas.drawBitmap(bitmap, src, dst, Paint(Paint.FILTER_BITMAP_FLAG))
+        val dim = dimAmount.coerceIn(0f, 1f)
+        if (dim > 0f) {
+            canvas.drawColor(Color.argb((dim * 255).toInt(), 0, 0, 0))
+        }
     }
 
     private fun drawHint(canvas: Canvas, width: Int, height: Int) {
@@ -144,15 +218,6 @@ class CanvasWallpaperRenderer(
         canvas.restore()
     }
 
-    private fun resolveBackgroundColor(background: BackgroundSpec): Int =
-        when (background) {
-            is BackgroundSpec.Solid -> parseColor(background.colorHex, DEFAULT_BG)
-            is BackgroundSpec.Gradient, is BackgroundSpec.Photo -> {
-                diagnostics.log("invalid_background_fallback", mapOf("type" to background::class.simpleName))
-                DEFAULT_BG
-            }
-        }
-
     private fun resolveTypeface(style: TextStyleConfig): Typeface {
         val family = when (style.fontFamilyName.lowercase()) {
             "sansserif", "sans_serif" -> Typeface.SANS_SERIF
@@ -167,14 +232,21 @@ class CanvasWallpaperRenderer(
         return Typeface.create(family, styleFlag)
     }
 
-    fun spToPx(sp: Float): Float = sp * density
+    fun spToPx(sp: Float): Float = sp * density * fontScale
 
     private fun parseColor(hex: String, fallback: Int): Int =
-        try {
+        parseColorOrNull(hex) ?: fallback
+
+    private fun parseColorOrNull(hex: String): Int? {
+        if (!BackgroundValidation.isValidColorHex(if (hex.startsWith("#")) hex else "#$hex")) {
+            // Still try Color.parseColor for lenient editor inputs without forcing validation.
+        }
+        return try {
             Color.parseColor(if (hex.startsWith("#")) hex else "#$hex")
         } catch (_: Exception) {
-            fallback
+            null
         }
+    }
 
     companion object {
         private val DEFAULT_BG = Color.parseColor(CollectionDefaults.DEFAULT_SOLID_HEX)
