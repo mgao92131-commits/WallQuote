@@ -2,12 +2,20 @@ package com.example.wallquote.domain.background
 
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.PhotoScaleMode
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 object BackgroundValidation {
 
     private val HEX_COLOR = Regex("^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
+    private val FORMAL_ASSET_ID = Regex("^bg_[0-9a-f]{32}$")
+    private val STAGING_TOKEN = Regex("^draft_[0-9a-f-]{36}$")
 
     fun isValidColorHex(hex: String): Boolean = HEX_COLOR.matches(normalizeColor(hex))
+
+    fun isValidAssetId(assetId: String): Boolean = FORMAL_ASSET_ID.matches(assetId.trim())
+
+    fun isValidStagingToken(token: String): Boolean = STAGING_TOKEN.matches(token.trim())
 
     fun normalize(spec: BackgroundSpec): BackgroundSpec =
         when (spec) {
@@ -39,15 +47,14 @@ object BackgroundValidation {
             }
             is BackgroundSpec.Photo -> when {
                 normalized.assetId.isBlank() -> "请先选择图片"
-                isExternalUri(normalized.assetId) -> "图片资产无效，请重新选择"
+                isValidStagingToken(normalized.assetId) -> null
+                !isValidAssetId(normalized.assetId) -> "图片资产无效，请重新选择"
                 else -> null
             }
         }
 
-    fun isUsablePhotoAssetId(assetId: String): Boolean {
-        val trimmed = assetId.trim()
-        return trimmed.isNotEmpty() && !isExternalUri(trimmed)
-    }
+    /** Formal persisted photo asset ids only. */
+    fun isUsablePhotoAssetId(assetId: String): Boolean = isValidAssetId(assetId)
 
     fun isExternalUri(value: String): Boolean =
         value.startsWith("content:", ignoreCase = true) ||
@@ -73,5 +80,55 @@ object BackgroundValidation {
         var value = degrees % 360f
         if (value < 0f) value += 360f
         return value.coerceIn(BackgroundLimits.ANGLE_MIN, BackgroundLimits.ANGLE_MAX)
+    }
+}
+
+data class ProcessedImageSize(
+    val width: Int,
+    val height: Int,
+)
+
+object ProcessedImageSizeCalculator {
+    fun calculate(
+        targetWidth: Int,
+        targetHeight: Int,
+        blurRadiusDp: Float,
+    ): ProcessedImageSize {
+        if (targetWidth <= 0 || targetHeight <= 0) {
+            return ProcessedImageSize(0, 0)
+        }
+        val withBlur = blurRadiusDp > 0f
+        val maxPixels = if (withBlur) {
+            BackgroundLimits.MAX_PROCESS_PIXELS_BLUR
+        } else {
+            BackgroundLimits.MAX_PROCESS_PIXELS_SHARP
+        }
+        var width = targetWidth
+        var height = targetHeight
+        val pixels = width.toLong() * height.toLong()
+        if (pixels > maxPixels) {
+            val scale = sqrt(maxPixels.toDouble() / pixels.toDouble())
+            width = maxOf(1, (width * scale).toInt())
+            height = maxOf(1, (height * scale).toInt())
+            // Guard rounding so we never exceed the pixel budget.
+            while (width.toLong() * height > maxPixels && (width > 1 || height > 1)) {
+                if (width >= height && width > 1) width-- else if (height > 1) height-- else break
+            }
+        }
+        if (withBlur) {
+            val maxEdge = BackgroundLimits.MAX_PROCESS_EDGE_BLUR
+            val edge = maxOf(width, height)
+            if (edge > maxEdge) {
+                val scale = maxEdge.toFloat() / edge.toFloat()
+                width = maxOf(1, (width * scale).toInt())
+                height = maxOf(1, (height * scale).toInt())
+            }
+        }
+        return ProcessedImageSize(width, height)
+    }
+
+    fun effectiveBlurRadiusPx(blurRadiusDp: Float, density: Float): Int {
+        if (blurRadiusDp <= 0f) return 0
+        return (blurRadiusDp * density).roundToInt().coerceIn(1, 25)
     }
 }

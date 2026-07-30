@@ -9,9 +9,10 @@ import androidx.room.RoomDatabase
         CollectionTextLineEntity::class,
         CustomStyleEntity::class,
     ],
-    version = 2,
+    version = 1,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun collectionDao(): CollectionDao
+    abstract fun customStyleDao(): CustomStyleDao
 }

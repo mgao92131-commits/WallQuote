@@ -8,12 +8,15 @@ import androidx.exifinterface.media.ExifInterface
 import com.example.wallquote.domain.background.BackgroundAssetId
 import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.background.BackgroundLimits
+import com.example.wallquote.domain.background.BackgroundValidation
 import com.example.wallquote.domain.background.StagedBackgroundAsset
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,10 +44,15 @@ class FileBackgroundAssetStore @Inject constructor(
             throw BackgroundImportException("unsupported_mime")
         }
         val token = "draft_${UUID.randomUUID()}"
+        require(BackgroundValidation.isValidStagingToken(token)) {
+            "invalid_staging_token"
+        }
         val tempFile = File(stagingDir, "$token.tmp")
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(tempFile).use { output -> input.copyTo(output) }
+                FileOutputStream(tempFile).use { output ->
+                    copyWithLimit(input, output, BackgroundLimits.MAX_IMPORT_BYTES)
+                }
             } ?: throw BackgroundImportException("open_failed")
 
             if (tempFile.length() <= 0L) {
@@ -56,12 +64,16 @@ class FileBackgroundAssetStore @Inject constructor(
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
                 throw BackgroundImportException("undecodable")
             }
+            if (bounds.outWidth > BackgroundLimits.MAX_SOURCE_EDGE ||
+                bounds.outHeight > BackgroundLimits.MAX_SOURCE_EDGE
+            ) {
+                throw BackgroundImportException("source_too_large")
+            }
             val pixels = bounds.outWidth.toLong() * bounds.outHeight.toLong()
-            if (pixels > BackgroundLimits.MAX_DECODE_PIXELS * 16L) {
-                // Extremely large sources still allowed as files; decode will subsample later.
+            if (pixels > BackgroundLimits.MAX_SOURCE_PIXELS) {
+                throw BackgroundImportException("source_too_large")
             }
 
-            // Smoke-decode a tiny sample to catch truncated payloads.
             val sample = BitmapFactory.Options().apply {
                 inJustDecodeBounds = false
                 inSampleSize = largestSampleSize(bounds.outWidth, bounds.outHeight, 64, 64)
@@ -80,47 +92,70 @@ class FileBackgroundAssetStore @Inject constructor(
         }
     }
 
-    override suspend fun commit(stagedAsset: StagedBackgroundAsset): BackgroundAssetId =
+    override suspend fun prepareFormalAsset(stagedAsset: StagedBackgroundAsset): BackgroundAssetId =
         withContext(Dispatchers.IO) {
+            if (!BackgroundValidation.isValidStagingToken(stagedAsset.stagingToken)) {
+                throw BackgroundImportException("invalid_staging_token")
+            }
             val staged = stagingFile(stagedAsset.stagingToken)
             if (!staged.exists()) throw BackgroundImportException("staging_missing")
             val assetId = "bg_${UUID.randomUUID().toString().replace("-", "")}"
+            require(BackgroundValidation.isValidAssetId(assetId))
             val target = File(formalDir, "$assetId.jpg")
-            // Normalize to JPEG with EXIF orientation baked in for stable wallpaper decode.
-            decodeAndWriteNormalized(staged, target)
-            staged.delete()
-            BackgroundAssetId(assetId)
+            try {
+                decodeAndWriteNormalized(staged, target)
+                // Staging intentionally kept for retry until Room succeeds.
+                BackgroundAssetId(assetId)
+            } catch (error: Throwable) {
+                target.delete()
+                throw if (error is BackgroundImportException) {
+                    error
+                } else {
+                    BackgroundImportException("prepare_failed", error)
+                }
+            }
         }
 
     override suspend fun discardStaging(stagedAsset: StagedBackgroundAsset) =
         withContext(Dispatchers.IO) {
+            if (!BackgroundValidation.isValidStagingToken(stagedAsset.stagingToken)) return@withContext
             stagingFile(stagedAsset.stagingToken).delete()
             Unit
         }
 
     override suspend fun delete(assetId: BackgroundAssetId) = withContext(Dispatchers.IO) {
-        resolveFile(assetId)?.delete()
+        resolveFormalFile(assetId)?.delete()
         Unit
     }
 
     override suspend fun exists(assetId: BackgroundAssetId): Boolean = withContext(Dispatchers.IO) {
-        resolveFile(assetId)?.exists() == true
+        resolveFormalFile(assetId)?.exists() == true
     }
 
     override suspend fun resolvePath(assetId: BackgroundAssetId): String? = withContext(Dispatchers.IO) {
-        resolveFile(assetId)?.takeIf { it.exists() }?.absolutePath
+        resolveFormalFile(assetId)?.takeIf { it.exists() }?.absolutePath
     }
 
     override suspend fun resolveStagingPath(stagedAsset: StagedBackgroundAsset): String? =
         withContext(Dispatchers.IO) {
-            stagingFile(stagedAsset.stagingToken).takeIf { it.exists() }?.absolutePath
+            if (!BackgroundValidation.isValidStagingToken(stagedAsset.stagingToken)) return@withContext null
+            stagingFile(stagedAsset.stagingToken).takeIf { it.exists() && isUnderRoot(it, stagingDir) }
+                ?.absolutePath
         }
 
     override suspend fun cleanupOrphans(referencedAssetIds: Set<String>) = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         formalDir.listFiles()?.forEach { file ->
             val id = file.nameWithoutExtension
-            if (id !in referencedAssetIds && now - file.lastModified() > BackgroundLimits.ORPHAN_ASSET_RETENTION_MILLIS) {
+            if (!BackgroundValidation.isValidAssetId(id)) {
+                if (now - file.lastModified() > BackgroundLimits.ORPHAN_ASSET_RETENTION_MILLIS) {
+                    file.delete()
+                }
+                return@forEach
+            }
+            if (id !in referencedAssetIds &&
+                now - file.lastModified() > BackgroundLimits.ORPHAN_ASSET_RETENTION_MILLIS
+            ) {
                 file.delete()
             }
         }
@@ -138,16 +173,30 @@ class FileBackgroundAssetStore @Inject constructor(
 
     private fun stagingFile(token: String): File = File(stagingDir, "$token.tmp")
 
-    private fun resolveFile(assetId: BackgroundAssetId): File? {
-        val id = assetId.value.trim()
-        if (id.isEmpty()) return null
-        val jpg = File(formalDir, "$id.jpg")
-        if (jpg.exists()) return jpg
-        val png = File(formalDir, "$id.png")
-        if (png.exists()) return png
-        val webp = File(formalDir, "$id.webp")
-        if (webp.exists()) return webp
-        return null
+    private fun resolveFormalFile(assetId: BackgroundAssetId): File? {
+        if (!BackgroundValidation.isValidAssetId(assetId.value)) return null
+        val file = File(formalDir, "${assetId.value.trim()}.jpg")
+        return file.takeIf { isUnderRoot(it, formalDir) }
+    }
+
+    private fun isUnderRoot(file: File, root: File): Boolean {
+        val rootPath = root.canonicalFile.path + File.separator
+        val filePath = file.canonicalFile.path
+        return filePath.startsWith(rootPath) || filePath == root.canonicalFile.path
+    }
+
+    private fun copyWithLimit(input: InputStream, output: OutputStream, maxBytes: Long) {
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            if (total > maxBytes) {
+                throw BackgroundImportException("file_too_large")
+            }
+            output.write(buffer, 0, count)
+        }
     }
 
     private fun decodeAndWriteNormalized(source: File, target: File) {
@@ -231,7 +280,6 @@ class FileBackgroundAssetStore @Inject constructor(
             ) {
                 sample *= 2
             }
-            // Also respect max pixels.
             while (
                 (width / sample).toLong() * (height / sample) > BackgroundLimits.MAX_DECODE_PIXELS &&
                 sample < 64

@@ -90,6 +90,54 @@ class WallpaperCoordinatorTest {
         }
     }
 
+    /** Records start/cancel calls; frames only fire when a test explicitly drives them. */
+    private class FakeTransitionDriver : TransitionDriver {
+        var startCount = 0
+        var cancelCount = 0
+        private var running = false
+        private var pendingTo: (() -> Unit)? = null
+        private var pendingOnFrame: ((Float) -> Unit)? = null
+        private var pendingOnComplete: (() -> Unit)? = null
+
+        override fun isRunning(): Boolean = running
+
+        override fun start(
+            from: () -> Unit,
+            to: () -> Unit,
+            onFrame: (Float) -> Unit,
+            onComplete: () -> Unit,
+        ) {
+            startCount++
+            running = true
+            pendingTo = to
+            pendingOnFrame = onFrame
+            pendingOnComplete = onComplete
+            from()
+        }
+
+        override fun cancel() {
+            if (running) cancelCount++
+            running = false
+            pendingTo = null
+            pendingOnFrame = null
+            pendingOnComplete = null
+        }
+
+        /** Simulates the driver reaching the end of the animation. */
+        fun completeNow() {
+            val to = pendingTo
+            val onFrame = pendingOnFrame
+            val onComplete = pendingOnComplete
+            running = false
+            pendingTo = null
+            pendingOnFrame = null
+            pendingOnComplete = null
+            to?.invoke()
+            onFrame?.invoke(1f)
+            onComplete?.invoke()
+        }
+    }
+
     private fun collection(
         id: Long,
         lines: List<QuoteLine>,
@@ -108,6 +156,7 @@ class WallpaperCoordinatorTest {
         clock: FakeClock,
         renderer: FakeRenderer,
         scheduler: FakeScheduler = FakeScheduler(),
+        transitionDriver: FakeTransitionDriver = FakeTransitionDriver(),
     ): WallpaperCoordinator {
         val coordinator = WallpaperCoordinator(
             scope = backgroundScope,
@@ -115,6 +164,7 @@ class WallpaperCoordinatorTest {
             renderer = renderer,
             boundaryScheduler = scheduler,
             diagnostics = FakeDiagnostics(),
+            transitionDriver = transitionDriver,
         )
         coordinator.start()
         return coordinator
@@ -328,6 +378,176 @@ class WallpaperCoordinatorTest {
         coordinator.offer(WallpaperEvent.ScheduleBoundaryReached)
         advanceUntilIdle()
         assertEquals(PlaybackCursor(1, 11), coordinator.currentState().cursor)
+        finish(coordinator)
+    }
+
+    private fun TestScope.revealAfterLongHide(
+        coordinator: WallpaperCoordinator,
+        clock: FakeClock,
+    ) {
+        coordinator.offer(WallpaperEvent.VisibilityChanged(false))
+        clock.elapsed += 30_000
+        coordinator.offer(WallpaperEvent.VisibilityChanged(true))
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun syncPathsNeverStartTransition() = runTest(UnconfinedTestDispatcher()) {
+        val clock = FakeClock()
+        val renderer = FakeRenderer()
+        val transitionDriver = FakeTransitionDriver()
+        val coordinator = createCoordinator(clock, renderer, transitionDriver = transitionDriver)
+        val collections = listOf(
+            collection(1, listOf(QuoteLine(11, "A1", 0), QuoteLine(12, "A2", 1))),
+        )
+        coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
+        coordinator.offer(WallpaperEvent.SurfaceCreated(fakeHolder))
+        coordinator.offer(WallpaperEvent.SurfaceChanged(fakeHolder, 1080, 1920))
+        coordinator.offer(WallpaperEvent.VisibilityChanged(true))
+        coordinator.offer(WallpaperEvent.ScreenOn)
+        coordinator.offer(WallpaperEvent.TimeOrZoneChanged)
+        coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
+        coordinator.offer(WallpaperEvent.ScheduleBoundaryReached)
+        advanceUntilIdle()
+
+        assertEquals(0, transitionDriver.startCount)
+        assertFalse(coordinator.isTransitioningForTest())
+        finish(coordinator)
+    }
+
+    @Test
+    fun longHideAdvanceStartsTransitionAndCompletesToTargetText() = runTest(UnconfinedTestDispatcher()) {
+        val clock = FakeClock()
+        val renderer = FakeRenderer()
+        val transitionDriver = FakeTransitionDriver()
+        val coordinator = createCoordinator(clock, renderer, transitionDriver = transitionDriver)
+        val collections = listOf(
+            collection(1, listOf(QuoteLine(11, "A1", 0), QuoteLine(12, "A2", 1))),
+        )
+        coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
+        coordinator.offer(WallpaperEvent.SurfaceCreated(fakeHolder))
+        coordinator.offer(WallpaperEvent.SurfaceChanged(fakeHolder, 1080, 1920))
+        coordinator.offer(WallpaperEvent.VisibilityChanged(true))
+        advanceUntilIdle()
+
+        revealAfterLongHide(coordinator, clock)
+
+        assertEquals(1, transitionDriver.startCount)
+        assertTrue(coordinator.isTransitioningForTest())
+        assertEquals(PlaybackCursor(1, 12), coordinator.currentState().cursor)
+
+        transitionDriver.completeNow()
+        advanceUntilIdle()
+
+        assertFalse(coordinator.isTransitioningForTest())
+        assertEquals("A2", renderer.lastSpec?.text)
+        finish(coordinator)
+    }
+
+    @Test
+    fun hideCancelsInFlightTransition() = runTest(UnconfinedTestDispatcher()) {
+        val clock = FakeClock()
+        val renderer = FakeRenderer()
+        val transitionDriver = FakeTransitionDriver()
+        val coordinator = createCoordinator(clock, renderer, transitionDriver = transitionDriver)
+        val collections = listOf(
+            collection(1, listOf(QuoteLine(11, "A1", 0), QuoteLine(12, "A2", 1))),
+        )
+        coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
+        coordinator.offer(WallpaperEvent.SurfaceCreated(fakeHolder))
+        coordinator.offer(WallpaperEvent.SurfaceChanged(fakeHolder, 1080, 1920))
+        coordinator.offer(WallpaperEvent.VisibilityChanged(true))
+        advanceUntilIdle()
+        revealAfterLongHide(coordinator, clock)
+        assertTrue(coordinator.isTransitioningForTest())
+
+        coordinator.offer(WallpaperEvent.VisibilityChanged(false))
+        advanceUntilIdle()
+
+        assertEquals(1, transitionDriver.cancelCount)
+        assertFalse(coordinator.isTransitioningForTest())
+        finish(coordinator)
+    }
+
+    @Test
+    fun surfaceDestroyedCancelsInFlightTransition() = runTest(UnconfinedTestDispatcher()) {
+        val clock = FakeClock()
+        val renderer = FakeRenderer()
+        val transitionDriver = FakeTransitionDriver()
+        val coordinator = createCoordinator(clock, renderer, transitionDriver = transitionDriver)
+        val collections = listOf(
+            collection(1, listOf(QuoteLine(11, "A1", 0), QuoteLine(12, "A2", 1))),
+        )
+        coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
+        coordinator.offer(WallpaperEvent.SurfaceCreated(fakeHolder))
+        coordinator.offer(WallpaperEvent.SurfaceChanged(fakeHolder, 1080, 1920))
+        coordinator.offer(WallpaperEvent.VisibilityChanged(true))
+        advanceUntilIdle()
+        revealAfterLongHide(coordinator, clock)
+        assertTrue(coordinator.isTransitioningForTest())
+
+        coordinator.offer(WallpaperEvent.SurfaceDestroyed)
+        advanceUntilIdle()
+
+        assertEquals(1, transitionDriver.cancelCount)
+        assertFalse(coordinator.isTransitioningForTest())
+        finish(coordinator)
+    }
+
+    @Test
+    fun collectionsChangedCancelsTransitionAndResyncsImmediately() = runTest(UnconfinedTestDispatcher()) {
+        val clock = FakeClock()
+        val renderer = FakeRenderer()
+        val transitionDriver = FakeTransitionDriver()
+        val coordinator = createCoordinator(clock, renderer, transitionDriver = transitionDriver)
+        val collections = listOf(
+            collection(1, listOf(QuoteLine(11, "A1", 0), QuoteLine(12, "A2", 1))),
+        )
+        coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
+        coordinator.offer(WallpaperEvent.SurfaceCreated(fakeHolder))
+        coordinator.offer(WallpaperEvent.SurfaceChanged(fakeHolder, 1080, 1920))
+        coordinator.offer(WallpaperEvent.VisibilityChanged(true))
+        advanceUntilIdle()
+        revealAfterLongHide(coordinator, clock)
+        assertTrue(coordinator.isTransitioningForTest())
+
+        val updated = listOf(
+            collection(1, listOf(QuoteLine(11, "A1-edited", 0), QuoteLine(12, "A2-edited", 1))),
+        )
+        coordinator.offer(WallpaperEvent.CollectionsChanged(updated))
+        advanceUntilIdle()
+
+        assertEquals(1, transitionDriver.cancelCount)
+        assertFalse(coordinator.isTransitioningForTest())
+        assertEquals("A2-edited", renderer.lastSpec?.text)
+        finish(coordinator)
+    }
+
+    @Test
+    fun scheduleBoundaryCancelsTransitionAndSyncsWithoutAdvance() = runTest(UnconfinedTestDispatcher()) {
+        val clock = FakeClock(minute = 8 * 60 - 1)
+        val renderer = FakeRenderer()
+        val transitionDriver = FakeTransitionDriver()
+        val coordinator = createCoordinator(clock, renderer, transitionDriver = transitionDriver)
+        val collections = listOf(
+            collection(1, listOf(QuoteLine(11, "A1", 0), QuoteLine(12, "A2", 1))),
+        )
+        coordinator.offer(WallpaperEvent.CollectionsChanged(collections))
+        coordinator.offer(WallpaperEvent.SurfaceCreated(fakeHolder))
+        coordinator.offer(WallpaperEvent.SurfaceChanged(fakeHolder, 1080, 1920))
+        coordinator.offer(WallpaperEvent.VisibilityChanged(true))
+        advanceUntilIdle()
+        revealAfterLongHide(coordinator, clock)
+        assertTrue(coordinator.isTransitioningForTest())
+        val cursorBeforeBoundary = coordinator.currentState().cursor
+
+        clock.minute = 8 * 60
+        coordinator.offer(WallpaperEvent.ScheduleBoundaryReached)
+        advanceUntilIdle()
+
+        assertEquals(1, transitionDriver.cancelCount)
+        assertFalse(coordinator.isTransitioningForTest())
+        assertEquals(cursorBeforeBoundary, coordinator.currentState().cursor)
         finish(coordinator)
     }
 }

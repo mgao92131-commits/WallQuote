@@ -1,20 +1,26 @@
 package com.example.wallquote.core.preview
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -24,25 +30,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
 import com.example.wallquote.domain.background.GradientGeometryCalculator
-import com.example.wallquote.domain.layout.QuoteLayoutCalculator
+import com.example.wallquote.domain.layout.MeasuredQuoteText
+import com.example.wallquote.domain.layout.QuoteBlockLayoutCalculator
 import com.example.wallquote.domain.model.BackgroundSpec
+import com.example.wallquote.domain.model.HorizontalTextAlignment
 import com.example.wallquote.domain.model.QuoteRenderInput
-import java.io.File
+import com.example.wallquote.domain.model.SystemFontFamily
+import com.example.wallquote.domain.style.TextStyleNormalizer
 import kotlin.math.roundToInt
 
 @Composable
 fun QuotePreview(
     state: QuoteRenderInput,
     modifier: Modifier = Modifier,
-    resolvedPhotoPath: String? = null,
+    processedPhotoBitmap: Bitmap? = null,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val widthPx = with(density) { maxWidth.toPx() }
         val heightPx = with(density) { maxHeight.toPx() }
+        val densityScale = density.density
 
         when (val bg = state.background) {
             is BackgroundSpec.Solid -> {
@@ -75,20 +85,11 @@ fun QuotePreview(
             }
             is BackgroundSpec.Photo -> {
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    val path = resolvedPhotoPath
-                    if (path != null) {
-                        AsyncImage(
-                            model = File(path),
+                    if (processedPhotoBitmap != null && !processedPhotoBitmap.isRecycled) {
+                        Image(
+                            bitmap = processedPhotoBitmap.asImageBitmap(),
                             contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .then(
-                                    if (bg.blurRadiusDp > 0f) {
-                                        Modifier.blur(bg.blurRadiusDp.dp)
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
+                            modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop,
                         )
                     }
@@ -104,52 +105,109 @@ fun QuotePreview(
             }
         }
 
-        val textAlign = when (state.textStyle.alignment) {
-            0 -> TextAlign.Start
-            2 -> TextAlign.End
-            else -> TextAlign.Center
+        val style = TextStyleNormalizer.normalize(state.textStyle)
+        val textAlign = when (style.horizontalAlignment) {
+            HorizontalTextAlignment.Start -> TextAlign.Start
+            HorizontalTextAlignment.End -> TextAlign.End
+            HorizontalTextAlignment.Center -> TextAlign.Center
         }
-        val layout = QuoteLayoutCalculator.calculate(
+        // Approximate measured text using max width; Compose measures during layout.
+        // Share pivot / block padding rules with Canvas via QuoteBlockLayoutCalculator.
+        val provisional = MeasuredQuoteText(
+            widthPx = widthPx * 0.84f,
+            heightPx = with(density) { (style.textSizeSp * style.lineHeightMultiplier * 3).sp.toPx() },
+        )
+        val layout = QuoteBlockLayoutCalculator.calculate(
             surfaceWidth = widthPx.roundToInt(),
             surfaceHeight = heightPx.roundToInt(),
             transform = state.transform,
+            measuredText = provisional,
+            style = style,
+            density = densityScale,
         )
+        val (shadowDx, shadowDy) = QuoteBlockLayoutCalculator.shadowOffsetPx(style, densityScale)
+        val textShadow = if (TextStyleNormalizer.hasVisibleShadow(style)) {
+            Shadow(
+                color = parseColorHex(style.shadowColorHex).copy(alpha = style.shadowAlpha),
+                offset = Offset(shadowDx, shadowDy),
+                blurRadius = style.shadowRadiusDp * densityScale,
+            )
+        } else {
+            null
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .offset {
                     IntOffset(
-                        x = layout.centerX.roundToInt() - widthPx.roundToInt() / 2,
-                        y = layout.centerY.roundToInt() - heightPx.roundToInt() / 2,
+                        x = (layout.pivotXPx - widthPx / 2f).roundToInt(),
+                        y = (layout.pivotYPx - heightPx / 2f).roundToInt(),
                     )
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = state.previewText,
+            val blockShape = RoundedCornerShape(style.blockCornerRadiusDp.dp)
+            val blockColor = style.blockColorHex
+            val borderColor = style.blockBorderColorHex
+            Box(
                 modifier = Modifier
-                    .width(with(density) { layout.maxTextWidth.toDp() })
-                    .rotate(layout.rotationDegrees),
-                style = TextStyle(
-                    color = parseColorHex(state.textStyle.colorHex).copy(alpha = state.textStyle.textAlpha),
-                    fontSize = state.textStyle.textSizeSp.sp,
-                    fontWeight = if (state.textStyle.isBold) FontWeight.Bold else FontWeight.Normal,
-                    fontStyle = if (state.textStyle.isItalic) FontStyle.Italic else FontStyle.Normal,
-                    fontFamily = resolveFontFamily(state.textStyle.fontFamilyName),
-                    textAlign = textAlign,
-                    lineHeight = (state.textStyle.textSizeSp * state.textStyle.lineHeightMultiplier).sp,
-                ),
-            )
+                    .rotate(layout.rotationDegrees)
+                    .then(
+                        if (TextStyleNormalizer.hasVisibleBlock(style) && blockColor != null) {
+                            Modifier
+                                .background(
+                                    color = parseColorHex(blockColor).copy(alpha = style.blockAlpha),
+                                    shape = blockShape,
+                                )
+                                .then(
+                                    if (style.blockBorderWidthDp > 0f &&
+                                        borderColor != null &&
+                                        style.blockBorderAlpha > 0f
+                                    ) {
+                                        Modifier.border(
+                                            width = style.blockBorderWidthDp.dp,
+                                            color = parseColorHex(borderColor)
+                                                .copy(alpha = style.blockBorderAlpha),
+                                            shape = blockShape,
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .padding(style.blockPaddingDp.dp)
+                        } else {
+                            Modifier
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = state.previewText,
+                    modifier = Modifier.width(with(density) { layout.textLayoutWidthPx.toDp() }),
+                    style = TextStyle(
+                        color = parseColorHex(style.colorHex).copy(alpha = style.textAlpha),
+                        fontSize = style.textSizeSp.sp,
+                        fontWeight = if (style.isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (style.isItalic) FontStyle.Italic else FontStyle.Normal,
+                        fontFamily = resolveFontFamily(style.fontFamily),
+                        textAlign = textAlign,
+                        lineHeight = (style.textSizeSp * style.lineHeightMultiplier).sp,
+                        letterSpacing = style.letterSpacingEm.em,
+                        shadow = textShadow,
+                    ),
+                )
+            }
         }
     }
 }
 
-fun resolveFontFamily(name: String): FontFamily =
-    when (name.lowercase()) {
-        "sansserif", "sans_serif" -> FontFamily.SansSerif
-        "monospace" -> FontFamily.Monospace
-        "cursive" -> FontFamily.Cursive
-        else -> FontFamily.Serif
+fun resolveFontFamily(family: SystemFontFamily): FontFamily =
+    when (family) {
+        SystemFontFamily.SansSerif -> FontFamily.SansSerif
+        SystemFontFamily.Monospace -> FontFamily.Monospace
+        SystemFontFamily.Cursive -> FontFamily.Cursive
+        SystemFontFamily.Serif -> FontFamily.Serif
     }
 
 fun parseColorHex(hex: String): Color {

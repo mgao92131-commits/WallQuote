@@ -10,58 +10,79 @@ import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.domain.repository.CollectionRepository
 
 /**
- * Saves a collection and reconciles photo asset files (commit staging / delete previous).
- * File IO and Room are not a single atomic transaction; failures compensate by deleting
- * newly committed assets and leaving the previous formal asset intact.
+ * Saves a collection and reconciles photo asset files.
+ *
+ * Order: prepare formal file (keep staging) → Room upsert → discard staging →
+ * best-effort delete previous formal asset. Room failure deletes the new formal file
+ * and keeps staging so the user can retry without re-picking.
  */
 class SaveCollectionWithBackgroundUseCase(
     private val repository: CollectionRepository,
     private val assetStore: BackgroundAssetStore,
+    private val onCleanupFailure: ((String, Throwable) -> Unit)? = null,
 ) {
     suspend operator fun invoke(
         config: CollectionConfig,
         previousBackground: BackgroundSpec?,
         stagedAsset: StagedBackgroundAsset?,
-    ): Long {
+    ): SaveCollectionResult {
+        var preparedFormalId: String? = null
         val preparedBackground = when {
             stagedAsset != null -> {
-                val committed = assetStore.commit(stagedAsset)
+                val formal = assetStore.prepareFormalAsset(stagedAsset)
+                preparedFormalId = formal.value
                 val photo = config.background as? BackgroundSpec.Photo
-                    ?: BackgroundSpec.Photo(assetId = committed.value)
-                BackgroundValidation.normalize(
-                    photo.copy(assetId = committed.value),
-                )
+                    ?: BackgroundSpec.Photo(assetId = formal.value)
+                BackgroundValidation.normalize(photo.copy(assetId = formal.value))
             }
             else -> BackgroundValidation.normalize(config.background)
         }
 
         val toSave = config.copy(background = preparedBackground)
         CollectionValidation.validateForSave(toSave)?.let { error ->
-            if (stagedAsset != null && preparedBackground is BackgroundSpec.Photo) {
-                assetStore.delete(BackgroundAssetId(preparedBackground.assetId))
-            }
+            deletePreparedFormal(preparedFormalId)
             throw IllegalArgumentException(error)
         }
 
-        val newAssetId = (preparedBackground as? BackgroundSpec.Photo)?.assetId
+        // Formal photos must use a valid asset id after prepare/normalize.
+        if (preparedBackground is BackgroundSpec.Photo &&
+            !BackgroundValidation.isValidAssetId(preparedBackground.assetId)
+        ) {
+            deletePreparedFormal(preparedFormalId)
+            throw IllegalArgumentException("图片资产无效，请重新选择")
+        }
+
         val previousAssetId = (previousBackground as? BackgroundSpec.Photo)
             ?.assetId
-            ?.takeIf { BackgroundValidation.isUsablePhotoAssetId(it) }
+            ?.takeIf { BackgroundValidation.isValidAssetId(it) }
 
-        return try {
-            val id = repository.upsertCollection(toSave)
-            if (newAssetId != null && previousAssetId != null && previousAssetId != newAssetId) {
-                assetStore.delete(BackgroundAssetId(previousAssetId))
-            }
-            if (preparedBackground !is BackgroundSpec.Photo && previousAssetId != null) {
-                assetStore.delete(BackgroundAssetId(previousAssetId))
-            }
-            id
+        val collectionId = try {
+            repository.upsertCollection(toSave)
         } catch (error: Throwable) {
-            if (stagedAsset != null && newAssetId != null) {
-                runCatching { assetStore.delete(BackgroundAssetId(newAssetId)) }
-            }
+            deletePreparedFormal(preparedFormalId)
             throw error
         }
+
+        // After Room success, never roll back the new formal asset.
+        if (stagedAsset != null) {
+            runCatching { assetStore.discardStaging(stagedAsset) }
+                .onFailure { onCleanupFailure?.invoke("discard_staging", it) }
+        }
+
+        val newAssetId = (preparedBackground as? BackgroundSpec.Photo)?.assetId
+        if (previousAssetId != null && previousAssetId != newAssetId) {
+            runCatching { assetStore.delete(BackgroundAssetId(previousAssetId)) }
+                .onFailure { onCleanupFailure?.invoke("delete_previous_asset", it) }
+        }
+
+        return SaveCollectionResult(
+            collectionId = collectionId,
+            savedBackground = preparedBackground,
+        )
+    }
+
+    private suspend fun deletePreparedFormal(assetId: String?) {
+        if (assetId == null) return
+        runCatching { assetStore.delete(BackgroundAssetId(assetId)) }
     }
 }

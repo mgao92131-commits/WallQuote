@@ -48,16 +48,17 @@
 - ~~渐变背景（`BackgroundSpec.Gradient`）。~~ **Phase 3 已实现**
 - ~~自定义图片背景（`BackgroundSpec.Photo`）、Coil 加载、dim/blur。~~ **Phase 3 已实现**（私有 assetId，非外部 URI）
 - 预设背景与默认名言首次启动种子数据。
-- 预设文字样式网格与用户自定义样式 CRUD（`custom_styles` 表 UI）。
-- 自定义样式全参数编辑器（边框、阴影、文字背景块、竖排等）。
+- ~~预设文字样式网格与用户自定义样式 CRUD（`custom_styles` 表 UI）。~~ **Phase 4 已实现**
+- ~~自定义样式全参数编辑器（边框、阴影、文字背景块）。~~ **Phase 4 已实现**（竖排未覆盖，见下）
 - 编辑器内拖动/旋转手势变换（归一化 `QuoteTransform`）。
-- 环形时间选择器（30 分钟步长）。
-- 主页卡片时间轴可视化、SwipeToDismiss。
+- ~~环形时间选择器（30 分钟步长）。~~ **Phase 4 已实现**（`CircularTimePicker`）
+- ~~主页卡片时间轴可视化、SwipeToDismiss。~~ **Phase 4 已实现**
 - ~~「设为壁纸」入口与壁纸选择器集成。~~ **Phase 2 已实现**
-- `AutoStyleMatcher` / `BackgroundSampler`。
-- 壁纸淡入淡出动画（`FadeTransitionController`）。
+- ~~`AutoStyleMatcher` / `BackgroundSampler`。~~ **Phase 4 已实现**
+- ~~壁纸淡入淡出动画（`FadeTransitionController`）。~~ **Phase 4 已实现**（`WallpaperTransitionDriver`，288ms）
+- 竖排文字样式（自定义样式编辑器暂未覆盖）。
 - `FontResolver` 含应用内打包字体（若许可证明确）。
-- Palette KTX 色彩提取。
+- Palette KTX 色彩提取（`BackgroundSampler` 目前用自研采样，未引入 Palette 库）。
 - 存储权限（API 33+ `READ_MEDIA_IMAGES` 等）。
 
 ---

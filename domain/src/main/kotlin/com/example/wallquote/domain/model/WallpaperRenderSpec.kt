@@ -9,4 +9,6 @@ data class WallpaperRenderSpec(
     val textStyle: TextStyleConfig,
     val transform: QuoteTransform,
     val showEmptyHint: Boolean = false,
+    /** Multiplies style.textAlpha during wallpaper transitions; does not mutate saved style. */
+    val transitionTextAlpha: Float = 1f,
 )

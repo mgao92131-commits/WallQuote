@@ -7,9 +7,8 @@ import android.content.IntentFilter
 import android.os.Build
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
-import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.repository.CollectionRepository
-import com.example.wallquote.wallpaper.background.DefaultBackgroundImageLoader
+import com.example.wallquote.wallpaper.background.BackgroundImageLoader
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,13 +25,14 @@ class WallQuoteWallpaperService : WallpaperService() {
     lateinit var collectionRepository: CollectionRepository
 
     @Inject
-    lateinit var backgroundAssetStore: BackgroundAssetStore
+    lateinit var backgroundImageLoader: BackgroundImageLoader
 
-    override fun onCreateEngine(): Engine = WallQuoteEngine(collectionRepository, backgroundAssetStore)
+    override fun onCreateEngine(): Engine =
+        WallQuoteEngine(collectionRepository, backgroundImageLoader)
 
     inner class WallQuoteEngine(
         private val repository: CollectionRepository,
-        private val assetStore: BackgroundAssetStore,
+        private val imageLoader: BackgroundImageLoader,
     ) : Engine() {
 
         private val engineId = AndroidWallpaperDiagnostics.newEngineId()
@@ -56,16 +56,14 @@ class WallQuoteWallpaperService : WallpaperService() {
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
+            (imageLoader as? com.example.wallquote.wallpaper.background.DefaultBackgroundImageLoader)
+                ?.diagnostics = diagnostics
             val renderer = CanvasWallpaperRenderer(
                 density = resources.displayMetrics.density,
                 fontScale = resources.configuration.fontScale,
                 diagnostics = diagnostics,
             )
             val scheduler = CoroutineBoundaryScheduler(scope)
-            val imageLoader = DefaultBackgroundImageLoader(
-                assetStore = assetStore,
-                diagnostics = diagnostics,
-            )
             coordinator = WallpaperCoordinator(
                 scope = scope,
                 clock = clock,

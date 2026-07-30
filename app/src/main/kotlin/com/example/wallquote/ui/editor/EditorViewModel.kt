@@ -1,24 +1,35 @@
 package com.example.wallquote.ui.editor
 
+import android.graphics.Bitmap
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.wallquote.automatch.BackgroundSampler
 import com.example.wallquote.domain.CollectionDefaults
 import com.example.wallquote.domain.CollectionValidation
+import com.example.wallquote.domain.automatch.AutoStyleMatcher
 import com.example.wallquote.domain.background.BackgroundAssetId
 import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.background.BackgroundValidation
+import com.example.wallquote.domain.background.StagedBackgroundAsset
 import com.example.wallquote.domain.editor.EditorDraft
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.domain.model.DailyTimeRange
 import com.example.wallquote.domain.model.PhotoScaleMode
 import com.example.wallquote.domain.model.QuoteLine
+import com.example.wallquote.domain.model.QuoteTransform
 import com.example.wallquote.domain.model.TextStyleConfig
+import com.example.wallquote.domain.style.BuiltInTextStylePresets
+import com.example.wallquote.domain.style.QuoteTransformNormalizer
 import com.example.wallquote.domain.time.minuteFromHalfHourIndex
+import com.example.wallquote.domain.usecase.CreateStyleFromCollectionUseCase
 import com.example.wallquote.domain.usecase.GetCollectionUseCase
+import com.example.wallquote.domain.usecase.ObserveCustomStylesUseCase
 import com.example.wallquote.domain.usecase.SaveCollectionWithBackgroundUseCase
+import com.example.wallquote.wallpaper.background.BackgroundImageProcessor
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -35,7 +46,11 @@ class EditorViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val getCollectionUseCase: GetCollectionUseCase,
     private val saveCollectionWithBackgroundUseCase: SaveCollectionWithBackgroundUseCase,
+    private val observeCustomStylesUseCase: ObserveCustomStylesUseCase,
+    private val createStyleFromCollectionUseCase: CreateStyleFromCollectionUseCase,
     private val assetStore: BackgroundAssetStore,
+    private val imageProcessor: BackgroundImageProcessor,
+    private val backgroundSampler: BackgroundSampler,
 ) : ViewModel() {
 
     private val argCollectionId: Long? =
@@ -49,8 +64,9 @@ class EditorViewModel @Inject constructor(
 
     private var originalDraft: EditorDraft? = null
     private var previousBackground: BackgroundSpec? = null
-    /** Negative keys for unsaved lines; persisted lines use positive DB ids as clientKey. */
     private var nextClientKey = -1L
+    private var photoImportGeneration = 0L
+    private var previewProcessJob: Job? = null
 
     private fun newClientKey(): Long {
         val key = nextClientKey
@@ -65,6 +81,11 @@ class EditorViewModel @Inject constructor(
         }
 
     init {
+        viewModelScope.launch {
+            observeCustomStylesUseCase().collect { styles ->
+                _uiState.update { it.copy(customStyles = styles) }
+            }
+        }
         if (argCollectionId != null) {
             loadExisting(argCollectionId)
         } else {
@@ -74,11 +95,7 @@ class EditorViewModel @Inject constructor(
 
     private fun buildNewEditorState(): EditorUiState {
         val entries = CollectionDefaults.defaultLines.map { line ->
-            EditorTextEntry(
-                lineId = 0,
-                clientKey = newClientKey(),
-                text = line.text,
-            )
+            EditorTextEntry(lineId = 0, clientKey = newClientKey(), text = line.text)
         }
         return EditorUiState(
             collectionId = null,
@@ -98,7 +115,7 @@ class EditorViewModel @Inject constructor(
         _uiState.value = state
         originalDraft = state.toDraft()
         previousBackground = state.backgroundSpec
-        refreshPhotoPreview(state)
+        refreshPhotoPreview()
     }
 
     private fun loadExisting(id: Long) {
@@ -127,7 +144,7 @@ class EditorViewModel @Inject constructor(
                 text = line.text,
             )
         }
-        val photoState = when (val bg = background) {
+        val photoState = when (background) {
             is BackgroundSpec.Photo -> PhotoEditorState.Ready(previewPath = null, isStaging = false)
             else -> PhotoEditorState.Empty
         }
@@ -151,25 +168,30 @@ class EditorViewModel @Inject constructor(
         )
     }
 
-    private fun refreshPhotoPreview(state: EditorUiState = _uiState.value) {
+    private fun refreshPhotoPreview() {
         viewModelScope.launch {
+            val state = _uiState.value
             val path = when {
                 state.stagedBackground != null ->
                     assetStore.resolveStagingPath(state.stagedBackground)
                 state.backgroundSpec is BackgroundSpec.Photo -> {
                     val id = (state.backgroundSpec as BackgroundSpec.Photo).assetId
-                    if (BackgroundValidation.isUsablePhotoAssetId(id)) {
-                        assetStore.resolvePath(BackgroundAssetId(id))
-                    } else {
-                        null
+                    when {
+                        BackgroundValidation.isValidAssetId(id) ->
+                            assetStore.resolvePath(BackgroundAssetId(id))
+                        BackgroundValidation.isValidStagingToken(id) && state.stagedBackground != null ->
+                            assetStore.resolveStagingPath(state.stagedBackground)
+                        else -> null
                     }
                 }
                 else -> null
             }
             _uiState.update { current ->
-                val photoState = when (current.backgroundSpec) {
+                val photoState = when (val bg = current.backgroundSpec) {
                     is BackgroundSpec.Photo -> {
-                        if (path == null && current.stagedBackground == null) {
+                        if (path == null && current.stagedBackground == null &&
+                            !BackgroundValidation.isValidStagingToken(bg.assetId)
+                        ) {
                             PhotoEditorState.Failed("图片缺失，请重新选择")
                         } else {
                             PhotoEditorState.Ready(
@@ -178,9 +200,35 @@ class EditorViewModel @Inject constructor(
                             )
                         }
                     }
-                    else -> current.photoEditorState
+                    else -> PhotoEditorState.Empty
                 }
                 current.copy(resolvedPhotoPath = path, photoEditorState = photoState)
+            }
+            requestProcessedPreview()
+        }
+    }
+
+    private fun requestProcessedPreview() {
+        previewProcessJob?.cancel()
+        val state = _uiState.value
+        val photo = state.backgroundSpec as? BackgroundSpec.Photo ?: run {
+            _uiState.update { it.copy(processedPreviewBitmap = null) }
+            return
+        }
+        val path = state.resolvedPhotoPath ?: return
+        previewProcessJob = viewModelScope.launch {
+            runCatching {
+                imageProcessor.process(
+                    sourcePath = path,
+                    targetWidth = PREVIEW_WIDTH,
+                    targetHeight = PREVIEW_HEIGHT,
+                    blurRadiusDp = photo.blurRadiusDp,
+                    density = 2f,
+                )
+            }.onSuccess { processed ->
+                _uiState.update { it.copy(processedPreviewBitmap = processed.bitmap) }
+            }.onFailure {
+                _uiState.update { it.copy(processedPreviewBitmap = null) }
             }
         }
     }
@@ -202,14 +250,17 @@ class EditorViewModel @Inject constructor(
     }
 
     fun setSolidBackground(hex: String) {
-        discardStagingAsync()
-        _uiState.update {
-            it.copy(
-                backgroundSpec = BackgroundSpec.Solid(hex),
-                stagedBackground = null,
-                resolvedPhotoPath = null,
-                photoEditorState = PhotoEditorState.Empty,
-            )
+        viewModelScope.launch {
+            discardCurrentStaging()
+            _uiState.update {
+                it.copy(
+                    backgroundSpec = BackgroundSpec.Solid(hex),
+                    stagedBackground = null,
+                    resolvedPhotoPath = null,
+                    processedPreviewBitmap = null,
+                    photoEditorState = PhotoEditorState.Empty,
+                )
+            }
         }
     }
 
@@ -218,14 +269,17 @@ class EditorViewModel @Inject constructor(
         endHex: String = "#5E81AC",
         angleDegrees: Float = 90f,
     ) {
-        discardStagingAsync()
-        _uiState.update {
-            it.copy(
-                backgroundSpec = BackgroundSpec.Gradient(startHex, endHex, angleDegrees),
-                stagedBackground = null,
-                resolvedPhotoPath = null,
-                photoEditorState = PhotoEditorState.Empty,
-            )
+        viewModelScope.launch {
+            discardCurrentStaging()
+            _uiState.update {
+                it.copy(
+                    backgroundSpec = BackgroundSpec.Gradient(startHex, endHex, angleDegrees),
+                    stagedBackground = null,
+                    resolvedPhotoPath = null,
+                    processedPreviewBitmap = null,
+                    photoEditorState = PhotoEditorState.Empty,
+                )
+            }
         }
     }
 
@@ -267,6 +321,7 @@ class EditorViewModel @Inject constructor(
                     backgroundSpec = BackgroundSpec.Photo(assetId = ""),
                     photoEditorState = PhotoEditorState.Empty,
                     resolvedPhotoPath = null,
+                    processedPreviewBitmap = null,
                 )
             }
         }
@@ -297,32 +352,51 @@ class EditorViewModel @Inject constructor(
 
     fun importPickedPhoto(uri: String) {
         viewModelScope.launch {
-            val draftId = _uiState.value.draftId
+            val generation = ++photoImportGeneration
+            val oldStaging = _uiState.value.stagedBackground
             val previousDim = (_uiState.value.backgroundSpec as? BackgroundSpec.Photo)?.dimAmount ?: 0.25f
             val previousBlur = (_uiState.value.backgroundSpec as? BackgroundSpec.Photo)?.blurRadiusDp ?: 0f
-            discardStagingAsync(wait = true)
+            val draftId = _uiState.value.draftId
             _uiState.update { it.copy(photoEditorState = PhotoEditorState.Importing, errorMessage = null) }
+
             runCatching {
                 assetStore.importToStaging(uri, draftId)
-            }.onSuccess { staged ->
-                val path = assetStore.resolveStagingPath(staged)
+            }.onSuccess { newStaging ->
+                if (generation != photoImportGeneration) {
+                    runCatching { assetStore.discardStaging(newStaging) }
+                    return@launch
+                }
+                val path = assetStore.resolveStagingPath(newStaging)
                 _uiState.update {
                     it.copy(
                         backgroundSpec = BackgroundSpec.Photo(
-                            assetId = staged.stagingToken,
+                            assetId = newStaging.stagingToken,
                             dimAmount = previousDim,
                             blurRadiusDp = previousBlur,
                             scaleMode = PhotoScaleMode.CenterCrop,
                         ),
-                        stagedBackground = staged,
+                        stagedBackground = newStaging,
                         resolvedPhotoPath = path,
                         photoEditorState = PhotoEditorState.Ready(previewPath = path, isStaging = true),
                     )
                 }
+                if (oldStaging != null && oldStaging != newStaging) {
+                    runCatching { assetStore.discardStaging(oldStaging) }
+                }
+                requestProcessedPreview()
             }.onFailure {
-                _uiState.update {
-                    it.copy(
-                        photoEditorState = PhotoEditorState.Failed("图片导入失败，请重试"),
+                if (generation != photoImportGeneration) return@launch
+                _uiState.update { state ->
+                    val restored = when {
+                        state.stagedBackground != null || state.resolvedPhotoPath != null ->
+                            PhotoEditorState.Ready(
+                                previewPath = state.resolvedPhotoPath,
+                                isStaging = state.stagedBackground != null,
+                            )
+                        else -> PhotoEditorState.Failed("图片导入失败，请重试")
+                    }
+                    state.copy(
+                        photoEditorState = restored,
                         errorMessage = "图片导入失败，请重试",
                     )
                 }
@@ -333,44 +407,37 @@ class EditorViewModel @Inject constructor(
     fun setPhotoDim(dimAmount: Float) {
         _uiState.update { state ->
             val photo = state.backgroundSpec as? BackgroundSpec.Photo ?: return@update state
-            state.copy(
-                backgroundSpec = photo.copy(
-                    dimAmount = dimAmount.coerceIn(0f, 1f),
-                ),
-            )
+            state.copy(backgroundSpec = photo.copy(dimAmount = dimAmount.coerceIn(0f, 1f)))
         }
     }
 
     fun setPhotoBlur(blurRadiusDp: Float) {
         _uiState.update { state ->
             val photo = state.backgroundSpec as? BackgroundSpec.Photo ?: return@update state
-            state.copy(
-                backgroundSpec = photo.copy(
-                    blurRadiusDp = blurRadiusDp.coerceIn(0f, 25f),
-                ),
-            )
+            state.copy(backgroundSpec = photo.copy(blurRadiusDp = blurRadiusDp.coerceIn(0f, 25f)))
         }
+        requestProcessedPreview()
     }
 
     fun removePhoto() {
-        discardStagingAsync()
-        _uiState.update {
-            it.copy(
-                backgroundSpec = BackgroundSpec.Solid(CollectionDefaults.DEFAULT_SOLID_HEX),
-                stagedBackground = null,
-                resolvedPhotoPath = null,
-                photoEditorState = PhotoEditorState.Empty,
-            )
+        viewModelScope.launch {
+            discardCurrentStaging()
+            _uiState.update {
+                it.copy(
+                    backgroundSpec = BackgroundSpec.Solid(CollectionDefaults.DEFAULT_SOLID_HEX),
+                    stagedBackground = null,
+                    resolvedPhotoPath = null,
+                    processedPreviewBitmap = null,
+                    photoEditorState = PhotoEditorState.Empty,
+                )
+            }
         }
     }
 
     fun addTextLine() {
         _uiState.update { state ->
             val newLine = EditorTextEntry(lineId = 0, clientKey = newClientKey(), text = "")
-            state.copy(
-                texts = state.texts + newLine,
-                previewTextIndex = state.texts.size,
-            )
+            state.copy(texts = state.texts + newLine, previewTextIndex = state.texts.size)
         }
     }
 
@@ -403,6 +470,103 @@ class EditorViewModel @Inject constructor(
         _uiState.update { it.copy(textStyle = transform(it.textStyle)) }
     }
 
+    /** Fully replaces the current style, e.g. from a built-in preset, custom style, or Auto Match. */
+    fun applyTextStyle(style: TextStyleConfig) {
+        _uiState.update {
+            it.copy(textStyle = style, autoMatchSuggestion = null, autoMatchBaselineStyle = null)
+        }
+    }
+
+    fun applyPreset(id: String) {
+        val preset = BuiltInTextStylePresets.findById(id) ?: return
+        applyTextStyle(preset.style)
+    }
+
+    fun applyCustomStyle(id: Long) {
+        val style = _uiState.value.customStyles.firstOrNull { it.id == id } ?: return
+        applyTextStyle(style.style)
+    }
+
+    /** Copies the current collection text style into a new custom style (value copy, no FK). */
+    fun saveCurrentStyleAsCustom(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) {
+            _uiState.update { it.copy(errorMessage = "样式名称不能为空") }
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                createStyleFromCollectionUseCase(trimmed, _uiState.value.textStyle)
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(errorMessage = error.message ?: "保存自定义样式失败")
+                }
+            }
+        }
+    }
+
+    fun setLayoutAdjustEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(layoutAdjustEnabled = enabled) }
+    }
+
+    fun updateTransform(transform: QuoteTransform) {
+        val normalized = QuoteTransformNormalizer.normalize(
+            centerXFraction = transform.centerXFraction,
+            centerYFraction = transform.centerYFraction,
+            rotationDegrees = transform.rotationDegrees,
+        )
+        _uiState.update { it.copy(transform = normalized) }
+    }
+
+    fun resetCenter() {
+        _uiState.update {
+            it.copy(transform = it.transform.copy(centerXFraction = 0.5f, centerYFraction = 0.5f))
+        }
+    }
+
+    fun resetRotation() {
+        _uiState.update { it.copy(transform = it.transform.copy(rotationDegrees = 0f)) }
+    }
+
+    /** Samples the current background and previews a contrast-safe style; user must confirm or undo. */
+    fun requestAutoMatch() {
+        val state = _uiState.value
+        if (!state.isAutoMatchAvailable || state.autoMatchLoading) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(autoMatchLoading = true, errorMessage = null) }
+            val sample = runCatching {
+                backgroundSampler.sample(state.backgroundSpec, state.processedPreviewBitmap)
+            }.getOrNull()
+            if (sample == null) {
+                _uiState.update {
+                    it.copy(autoMatchLoading = false, errorMessage = "自动匹配失败，请重试")
+                }
+                return@launch
+            }
+            val baseline = _uiState.value.textStyle
+            val suggestion = AutoStyleMatcher.suggest(sample, baseline)
+            _uiState.update {
+                it.copy(
+                    autoMatchLoading = false,
+                    autoMatchSuggestion = suggestion,
+                    autoMatchBaselineStyle = baseline,
+                    textStyle = suggestion.style,
+                )
+            }
+        }
+    }
+
+    fun confirmAutoMatch() {
+        _uiState.update { it.copy(autoMatchSuggestion = null, autoMatchBaselineStyle = null) }
+    }
+
+    fun undoAutoMatch() {
+        _uiState.update { state ->
+            val baseline = state.autoMatchBaselineStyle ?: return@update state
+            state.copy(textStyle = baseline, autoMatchSuggestion = null, autoMatchBaselineStyle = null)
+        }
+    }
+
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
     }
@@ -426,6 +590,7 @@ class EditorViewModel @Inject constructor(
                 _uiState.update { it.copy(errorMessage = "请先选择图片") }
                 return@launch
             }
+
             _uiState.update { it.copy(isSaving = true, errorMessage = null) }
             runCatching {
                 saveCollectionWithBackgroundUseCase(
@@ -433,19 +598,33 @@ class EditorViewModel @Inject constructor(
                     previousBackground = previousBackground,
                     stagedAsset = state.stagedBackground,
                 )
-            }.onSuccess { id ->
+            }.onSuccess { result ->
+                val formalPath = when (val bg = result.savedBackground) {
+                    is BackgroundSpec.Photo ->
+                        assetStore.resolvePath(BackgroundAssetId(bg.assetId))
+                    else -> null
+                }
                 _uiState.update {
                     it.copy(
-                        collectionId = id,
+                        collectionId = result.collectionId,
+                        backgroundSpec = result.savedBackground,
+                        stagedBackground = null,
+                        resolvedPhotoPath = formalPath,
+                        photoEditorState = when (result.savedBackground) {
+                            is BackgroundSpec.Photo ->
+                                PhotoEditorState.Ready(formalPath, isStaging = false)
+                            else -> PhotoEditorState.Empty
+                        },
                         isSaving = false,
                         errorMessage = null,
-                        stagedBackground = null,
                     )
                 }
-                previousBackground = _uiState.value.backgroundSpec
+                previousBackground = result.savedBackground
                 originalDraft = _uiState.value.toDraft()
+                requestProcessedPreview()
                 _events.emit(EditorEvent.Finish)
             }.onFailure { error ->
+                // Keep staging and editor draft for retry.
                 _uiState.update {
                     it.copy(
                         isSaving = false,
@@ -462,7 +641,7 @@ class EditorViewModel @Inject constructor(
             if (isDirty) {
                 _events.emit(EditorEvent.ShowUnsavedDialog)
             } else {
-                discardStagingAsync(wait = true)
+                discardCurrentStaging()
                 _events.emit(EditorEvent.Finish)
             }
         }
@@ -470,36 +649,21 @@ class EditorViewModel @Inject constructor(
 
     fun discardAndFinish() {
         viewModelScope.launch {
-            discardStagingAsync(wait = true)
+            discardCurrentStaging()
             _events.emit(EditorEvent.Finish)
         }
     }
 
-    override fun onCleared() {
-        // Do not delete staging here if user might return; orphan cleanup handles leftovers.
-        super.onCleared()
-    }
-
-    private fun discardStagingAsync(wait: Boolean = false) {
+    private suspend fun discardCurrentStaging() {
         val staged = _uiState.value.stagedBackground ?: return
-        val job = viewModelScope.launch {
-            runCatching { assetStore.discardStaging(staged) }
-        }
-        if (wait) {
-            // Best-effort; discard is fast IO.
-        }
-        @Suppress("UNUSED_VARIABLE")
-        val ignored = job
+        runCatching { assetStore.discardStaging(staged) }
+        _uiState.update { it.copy(stagedBackground = null) }
     }
 
     private fun EditorUiState.toCollectionConfig(): CollectionConfig {
         val nonBlank = texts
             .mapIndexed { index, entry ->
-                QuoteLine(
-                    id = entry.lineId,
-                    text = entry.text.trim(),
-                    displayOrder = index,
-                )
+                QuoteLine(id = entry.lineId, text = entry.text.trim(), displayOrder = index)
             }
             .filter { it.text.isNotBlank() }
         return CollectionConfig(
@@ -512,6 +676,11 @@ class EditorViewModel @Inject constructor(
             transform = transform,
             sortOrder = sortOrder,
         )
+    }
+
+    companion object {
+        private const val PREVIEW_WIDTH = 720
+        private const val PREVIEW_HEIGHT = 1280
     }
 }
 

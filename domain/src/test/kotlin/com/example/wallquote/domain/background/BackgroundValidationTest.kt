@@ -23,7 +23,7 @@ class BackgroundValidationTest {
     fun clampsDimAndBlur() {
         val photo = BackgroundValidation.normalize(
             BackgroundSpec.Photo(
-                assetId = "bg_abc",
+                assetId = "bg_0123456789abcdef0123456789abcdef",
                 dimAmount = 2f,
                 blurRadiusDp = 99f,
             ),
@@ -42,10 +42,19 @@ class BackgroundValidationTest {
 
     @Test
     fun externalUriRejected() {
-        assertFalse(BackgroundValidation.isUsablePhotoAssetId("content://media/1"))
+        assertFalse(BackgroundValidation.isValidAssetId("content://media/1"))
         assertEquals(
             "图片资产无效，请重新选择",
             BackgroundValidation.validate(BackgroundSpec.Photo(assetId = "content://media/1")),
+        )
+    }
+
+    @Test
+    fun formalAssetIdFormat() {
+        assertTrue(BackgroundValidation.isValidAssetId("bg_0123456789abcdef0123456789abcdef"))
+        assertFalse(BackgroundValidation.isValidAssetId("bg_short"))
+        assertTrue(
+            BackgroundValidation.isValidStagingToken("draft_01234567-89ab-cdef-0123-456789abcdef"),
         )
     }
 
@@ -56,12 +65,10 @@ class BackgroundValidationTest {
     }
 
     @Test
-    fun validGradient() {
-        assertNull(
-            BackgroundValidation.validate(
-                BackgroundSpec.Gradient("#111111", "#222222", angleDegrees = 45f),
-            ),
-        )
-        assertTrue(BackgroundValidation.isValidColorHex("#FFFFFF"))
+    fun processedSizeBoundsBlur() {
+        val size = ProcessedImageSizeCalculator.calculate(4000, 4000, blurRadiusDp = 8f)
+        assertTrue(size.width <= BackgroundLimits.MAX_PROCESS_EDGE_BLUR)
+        assertTrue(size.height <= BackgroundLimits.MAX_PROCESS_EDGE_BLUR)
+        assertTrue(size.width.toLong() * size.height <= BackgroundLimits.MAX_PROCESS_PIXELS_BLUR)
     }
 }

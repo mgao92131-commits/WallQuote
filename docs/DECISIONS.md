@@ -93,3 +93,44 @@ Phase 1 不展示。Phase 2 起展示「设为壁纸」：优先 `ACTION_CHANGE_
 - 渐变角度：0° 左→右，顺时针增加；Compose / Canvas 共用 `GradientGeometryCalculator`。
 - Center Crop / Dim 共用计算器；Dim 不进缓存 Key；Blur（0–25dp）在解码后异步处理并纳入缓存 Key。
 - 壁纸图片经 `BackgroundImageLoader` 异步加载，`BackgroundLoadToken` 校验防过期覆盖。
+
+## D-020 Phase 3.1 未发布 Schema 与保存协议（2026-07-30）
+
+- 应用尚未正式发布。Room 最终 Schema 为 **version 1**（字段直接为 `centerXFraction` / `centerYFraction`）；删除开发期迁移与旧 JSON 字段别名。
+- 开发阶段修改 Schema 后需卸载 APK 或清除应用数据；首个正式版本发布后才维护真实迁移。当前使用 `fallbackToDestructiveMigration`。
+- 图片保存：`prepareFormalAsset()` 生成正式文件且**保留 staging** → Room 成功 → 删除 staging → 尽力删除旧正式文件。Room 失败则删除新正式文件并保留 staging，可直接重试。
+- 旧资产删除失败只记诊断，不回滚已成功的 Room 写入，也不删除新正式文件。
+- 正式 `assetId` 格式 `bg_[0-9a-f]{32}`；staging `draft_[uuid]`；解析时校验 canonical path。
+- 编辑器与壁纸共用 `BackgroundImageProcessor`；共享 LRU；`onTrimMemory` 真正 trim/evict。
+
+## D-021 自定义样式：拷贝值而非外键（2026-07-31）
+
+- `custom_styles` 表与 `CustomTextStyle` 仅作为**样式模板库**：`CustomStylesListScreen` / `CustomStyleEditorScreen` 增删改查独立于收藏集。
+- 收藏集应用某个自定义样式时，**拷贝** `TextStyleConfig` 值写入 `collections.textStyleData`；不存储 `customStyleId` 外键。之后编辑收藏集样式或删除/修改该自定义样式**互不影响**（`CustomStylesListScreen` 删除确认文案明确提示「不影响已应用的收藏集」）。
+- `CreateStyleFromCollectionUseCase` 反向从收藏集当前样式创建新的自定义样式模板，同样是值拷贝。
+- 校验与归一化统一在 `SaveCustomStyleUseCase` 内完成：去空格后名称非空、名称去重（按需排除自身 id）、`TextStyleNormalizer.validate` + `normalize`。
+
+## D-022 壁纸推进淡入淡出（288ms）规则（2026-07-31）
+
+- `WallpaperTransitionDriver`：0–144ms 目标透明度 alpha 1→0（渐隐旧内容），144ms 时刻切换后台渲染目标为新游标，144–288ms alpha 0→1（渐显新内容）；帧回调节流 ~16ms。
+- **仅**在“推进”路径播放动画：`onVisibilityChanged` 命中隐藏 ≥30s 阈值的 advance。Room 数据同步（`syncOnly`）、日程边界（`ScheduleBoundaryReached`）、Surface 尺寸变化、时间/时区变化、首次创建 **均不**触发动画，只做同步 `sync` + 立即重绘。
+- 过渡期间渲染使用 `WallpaperRenderSpec.transitionTextAlpha` 叠乘文字透明度；旧背景保持显示直到过渡中点（144ms）才切到目标游标的背景。
+- 取消规则：
+  - Surface 销毁：取消动画，不采纳目标（`adoptTarget = false`），因为即将整体重建。
+  - 隐藏（`visible = false`）：取消动画但**采纳目标游标**的背景状态，保持指针在目标处，避免下次可见时重新决定。
+  - 收藏集数据变化：取消动画（采纳目标）后立即基于新数据 `sync` + 重绘，不残留旧过渡状态。
+  - 新的推进请求（理论上的连续 advance）：取消当前动画（采纳目标）后从当前指针重新开始一次新的 288ms 过渡。
+  - 日程边界：取消动画（采纳目标）后仅 `sync`，不 `advance`。
+- 目标为图片背景时，过渡开始前等待最多 300ms 尝试命中/解码缓存；超时则先以占位（沿用当前渲染）播放动画，动画完成后交由常规后台加载流程补齐图片。
+- 测试使用 `FakeTransitionDriver`（记录 start/cancel 调用次数，由测试手动驱动帧），避免在 JVM 单元测试中触碰真实 `Handler`/`Looper`。
+
+## D-023 `TextStyleConfig` 最终形状（2026-07-31）
+
+`TextStyleConfig` 冻结为以下分组字段（`domain/model/TextStyleConfig.kt`），编辑器与自定义样式编辑器共用同一模型，不再变更结构：
+
+- 文字：`colorHex`、`textAlpha`、`textSizeSp`、`fontFamily`（`SystemFontFamily` 系统字体枚举）、`isBold`、`isItalic`、`horizontalAlignment`、`letterSpacingEm`、`lineHeightMultiplier`。
+- 文字背景块：`blockColorHex`（null 表示不显示）、`blockAlpha`、`blockPaddingDp`、`blockCornerRadiusDp`。
+- 边框：`blockBorderWidthDp`、`blockBorderColorHex`、`blockBorderAlpha`（复用文字背景块的圆角）。
+- 阴影：`shadowRadiusDp`、`shadowDistanceDp`、`shadowAngleDegrees`（0°=右，顺时针增加）、`shadowColorHex`、`shadowAlpha`。
+- 不含竖排文字字段（P1 「竖排」需求本阶段未实现，见 REQUIREMENTS 遗留项）。
+- `TextStyleNormalizer` 负责越界裁剪、非有限值回退默认值、透明度归一化到 `[0,1]`；`AutoStyleMatcher` 只调整颜色/阴影/背景块相关字段，不触碰字号、字重、对齐、字距、行高。

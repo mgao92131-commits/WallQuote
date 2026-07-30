@@ -1,8 +1,10 @@
 package com.example.wallquote.ui.editor
 
+import com.example.wallquote.domain.automatch.TextStyleSuggestion
 import com.example.wallquote.domain.background.StagedBackgroundAsset
 import com.example.wallquote.domain.editor.EditorDraft
 import com.example.wallquote.domain.model.BackgroundSpec
+import com.example.wallquote.domain.model.CustomTextStyle
 import com.example.wallquote.domain.model.QuoteTransform
 import com.example.wallquote.domain.model.TextStyleConfig
 
@@ -58,6 +60,18 @@ data class EditorUiState(
     val stagedBackground: StagedBackgroundAsset? = null,
     val photoEditorState: PhotoEditorState = PhotoEditorState.Empty,
     val resolvedPhotoPath: String? = null,
+    /** Shared CenterCrop+Blur result for editor preview (matches wallpaper pipeline). */
+    val processedPreviewBitmap: android.graphics.Bitmap? = null,
+    /** True while the user is dragging/rotating the quote block directly on the preview. */
+    val layoutAdjustEnabled: Boolean = false,
+    /** Custom styles available to apply, kept in sync via [com.example.wallquote.domain.usecase.ObserveCustomStylesUseCase]. */
+    val customStyles: List<CustomTextStyle> = emptyList(),
+    /** Sampling + suggestion in progress for the "Auto Match" flow. */
+    val autoMatchLoading: Boolean = false,
+    /** Suggestion currently being previewed; textStyle already reflects it until confirmed/undone. */
+    val autoMatchSuggestion: TextStyleSuggestion? = null,
+    /** Style to restore to if the user undoes the previewed suggestion. */
+    val autoMatchBaselineStyle: TextStyleConfig? = null,
 ) {
     val canSave: Boolean
         get() = name.isNotBlank() && texts.any { it.text.isNotBlank() } && !isSaving &&
@@ -68,6 +82,13 @@ data class EditorUiState(
             is BackgroundSpec.Solid -> BackgroundKind.Solid
             is BackgroundSpec.Gradient -> BackgroundKind.Gradient
             is BackgroundSpec.Photo -> BackgroundKind.Photo
+        }
+
+    /** Auto Match needs a decoded preview bitmap for photo backgrounds; solid/gradient are always ready. */
+    val isAutoMatchAvailable: Boolean
+        get() = when (backgroundSpec) {
+            is BackgroundSpec.Photo -> processedPreviewBitmap != null
+            else -> true
         }
 
     fun toDraft(): EditorDraft =

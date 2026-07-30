@@ -39,9 +39,13 @@ data class CollectionTextLineEntity(
     val displayOrder: Int,
 )
 
-@Entity(tableName = "custom_styles")
+@Entity(
+    tableName = "custom_styles",
+    indices = [Index(value = ["name"], unique = true)],
+)
 data class CustomStyleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val textStyleData: String,
+    val sortOrder: Int = 0,
 )

@@ -4,17 +4,19 @@ import android.view.SurfaceHolder
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.domain.model.PlaybackState
+import com.example.wallquote.domain.model.WallpaperRenderSpec
 import com.example.wallquote.domain.wallpaper.PlaybackController
 import com.example.wallquote.domain.wallpaper.ScheduleBoundaryCalculator
 import com.example.wallquote.domain.wallpaper.WallpaperRenderSpecFactory
-import com.example.wallquote.wallpaper.background.BackgroundBitmapCache
 import com.example.wallquote.wallpaper.background.BackgroundImageLoader
 import com.example.wallquote.wallpaper.background.BackgroundImageResult
 import com.example.wallquote.wallpaper.background.BackgroundLoadToken
+import com.example.wallquote.domain.background.ProcessedImageSizeCalculator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Single-consumer event loop for wallpaper playback and rendering.
@@ -29,6 +31,7 @@ class WallpaperCoordinator(
     private val density: Float = 1f,
     private val hideAdvanceThresholdMillis: Long = 30_000L,
     private val showEmptyHint: Boolean = true,
+    private val transitionDriver: TransitionDriver = WallpaperTransitionDriver(),
 ) {
     private val eventChannel = Channel<WallpaperEvent>(Channel.UNLIMITED)
     private var loopJob: Job? = null
@@ -51,7 +54,19 @@ class WallpaperCoordinator(
     private var pendingBackgroundToken: BackgroundLoadToken? = null
     private var loadedBackground: PreparedPhotoFrame? = null
     private var loadedAssetId: String? = null
-    private var loadedBlurBucket: Int = -1
+    private var loadedBlurPx: Int = -1
+    private var loadedProcessedWidth: Int = -1
+    private var loadedProcessedHeight: Int = -1
+
+    // --- 288ms advance fade transition state (see WallpaperTransitionDriver) ---
+    private var transitionPrepareJob: Job? = null
+    private var transitionFromSpec: WallpaperRenderSpec? = null
+    private var transitionToSpec: WallpaperRenderSpec? = null
+    private var transitionToPhotoFrame: PreparedPhotoFrame? = null
+    private var transitionShowTarget: Boolean = false
+    private var transitionTextAlpha: Float = 1f
+    private val isTransitioning: Boolean
+        get() = transitionFromSpec != null
 
     fun start() {
         if (loopJob != null) return
@@ -75,19 +90,22 @@ class WallpaperCoordinator(
     fun close() {
         if (destroyed) return
         destroyed = true
+        cancelTransition(reason = "engine_destroyed", adoptTarget = false)
         cancelBackgroundLoad(reason = "engine_destroyed")
         boundaryScheduler.cancel()
         surfaceAvailable = false
         holder = null
         loadedBackground = null
         loadedAssetId = null
-        loadedBlurBucket = -1
+        loadedBlurPx = -1
+        loadedProcessedWidth = -1
+        loadedProcessedHeight = -1
         diagnostics.log("engine_destroyed")
         eventChannel.close()
     }
 
     fun trimMemory() {
-        imageLoader?.trimMemory()
+        imageLoader?.trimToHalf()
     }
 
     private fun handleEvent(event: WallpaperEvent) {
@@ -125,9 +143,12 @@ class WallpaperCoordinator(
             mapOf("gen" to surfaceGeneration, "w" to width, "h" to height),
         )
         if (sizeChanged) {
+            cancelTransition(reason = "surface_size_changed", adoptTarget = false)
             loadedBackground = null
             loadedAssetId = null
-            loadedBlurBucket = -1
+            loadedBlurPx = -1
+            loadedProcessedWidth = -1
+            loadedProcessedHeight = -1
         }
         syncOnly(source = "surface_changed")
         ensureBackgroundAndRender(source = "surface_changed")
@@ -135,13 +156,16 @@ class WallpaperCoordinator(
 
     private fun onSurfaceDestroyed() {
         diagnostics.log("surface_destroyed", mapOf("gen" to surfaceGeneration))
+        cancelTransition(reason = "surface_destroyed", adoptTarget = false)
         cancelBackgroundLoad(reason = "surface_destroyed")
         surfaceAvailable = false
         holder = null
         surfaceGeneration += 1
         loadedBackground = null
         loadedAssetId = null
-        loadedBlurBucket = -1
+        loadedBlurPx = -1
+        loadedProcessedWidth = -1
+        loadedProcessedHeight = -1
     }
 
     private fun onVisibilityChanged(nowVisible: Boolean) {
@@ -151,6 +175,8 @@ class WallpaperCoordinator(
             hiddenAtElapsedMillis = clock.elapsedRealtimeMillis()
             advancedForCurrentReveal = false
             boundaryScheduler.cancel()
+            // Stop animating while hidden; the cursor already points at the (adopted) target.
+            cancelTransition(reason = "hide", adoptTarget = true)
             return
         }
 
@@ -161,7 +187,7 @@ class WallpaperCoordinator(
         if (hiddenFor >= hideAdvanceThresholdMillis) {
             if (!advancedForCurrentReveal) {
                 advancedForCurrentReveal = true
-                advanceOnce(source = "visibility_long_hide")
+                advanceWithTransition(source = "visibility_long_hide")
             } else {
                 syncOnly(source = "visibility_deduped")
             }
@@ -190,6 +216,9 @@ class WallpaperCoordinator(
     }
 
     private fun onCollectionsChanged(next: List<CollectionConfig>) {
+        // Collections changed underneath the in-flight transition; abandon it and resync/render
+        // immediately from the fresh data instead of continuing to animate toward a stale target.
+        cancelTransition(reason = "collections_changed", adoptTarget = true)
         collections = next
         diagnostics.log(
             "collections_snapshot_changed",
@@ -204,6 +233,9 @@ class WallpaperCoordinator(
 
     private fun onScheduleBoundaryReached() {
         diagnostics.log("schedule_boundary_reached")
+        // Boundary crossings only sync (recompute active collections); they never advance the
+        // quote cursor, so any in-flight advance transition is cancelled rather than continued.
+        cancelTransition(reason = "schedule_boundary", adoptTarget = true)
         syncOnly(source = "schedule_boundary")
         scheduleNextBoundary()
         if (visible) {
@@ -230,7 +262,9 @@ class WallpaperCoordinator(
                     dimAmount = photo.dimAmount,
                 )
                 loadedAssetId = token.assetId
-                loadedBlurBucket = token.blurRadiusBucket
+                loadedBlurPx = token.effectiveBlurRadiusPx
+                loadedProcessedWidth = token.processedWidth
+                loadedProcessedHeight = token.processedHeight
                 renderIfPossible(source = "background_ready")
             }
             is BackgroundImageResult.Failed -> {
@@ -240,7 +274,9 @@ class WallpaperCoordinator(
                 )
                 loadedBackground = null
                 loadedAssetId = null
-                loadedBlurBucket = -1
+                loadedBlurPx = -1
+                loadedProcessedWidth = -1
+                loadedProcessedHeight = -1
                 renderIfPossible(source = "background_failed")
             }
         }
@@ -265,6 +301,140 @@ class WallpaperCoordinator(
             nowMillis = clock.currentWallTimeMillis(),
         )
         logCursorIfChanged(previous, source)
+    }
+
+    /**
+     * Advances the cursor and animates the visible change over 288ms via [transitionDriver].
+     * If a transition is already in-flight, it is cancelled and its (already-adopted) target
+     * cursor becomes the new "from" state, i.e. the animation restarts from where it currently is.
+     */
+    private fun advanceWithTransition(source: String) {
+        cancelTransition(reason = "advance_restart", adoptTarget = true)
+        val previousState = playbackState
+        val fromSpec = WallpaperRenderSpecFactory.fromState(collections, previousState, showEmptyHint = false)
+        advanceOnce(source)
+        if (playbackState.cursor == previousState.cursor) {
+            // Nothing to animate (e.g. single-quote playlist, or playlist became empty).
+            renderIfPossible(source = source)
+            return
+        }
+        val toSpec = WallpaperRenderSpecFactory.fromState(collections, playbackState, showEmptyHint = false)
+        beginTransition(source, fromSpec, toSpec)
+    }
+
+    private fun beginTransition(
+        source: String,
+        fromSpec: WallpaperRenderSpec,
+        toSpec: WallpaperRenderSpec,
+    ) {
+        transitionDriver.cancel()
+        transitionPrepareJob?.cancel()
+        transitionFromSpec = fromSpec
+        transitionToSpec = toSpec
+        transitionToPhotoFrame = null
+        transitionShowTarget = false
+        transitionTextAlpha = 1f
+        diagnostics.log("transition_started", mapOf("source" to source))
+
+        val targetPhoto = toSpec.background as? BackgroundSpec.Photo
+        val loader = imageLoader
+        if (targetPhoto == null || loader == null || surfaceWidth <= 0 || surfaceHeight <= 0) {
+            startTransitionAnimation(source)
+            return
+        }
+        // Photo target: wait briefly for a cache hit / decode, else proceed with a fallback frame
+        // and let the normal background-load path fill it in once the transition completes.
+        transitionPrepareJob = scope.launch {
+            val result = withTimeoutOrNull(TRANSITION_PHOTO_WAIT_MILLIS) {
+                loader.load(
+                    assetId = targetPhoto.assetId,
+                    targetWidth = surfaceWidth,
+                    targetHeight = surfaceHeight,
+                    blurRadiusDp = targetPhoto.blurRadiusDp,
+                    density = density,
+                )
+            }
+            if (transitionToSpec !== toSpec) return@launch // superseded by a newer transition
+            if (result is BackgroundImageResult.Success) {
+                transitionToPhotoFrame = PreparedPhotoFrame(result.bitmap, targetPhoto.dimAmount)
+            } else {
+                diagnostics.log("transition_photo_wait_timeout", mapOf("assetId" to targetPhoto.assetId))
+            }
+            startTransitionAnimation(source)
+        }
+    }
+
+    private fun startTransitionAnimation(source: String) {
+        if (destroyed) return
+        transitionDriver.start(
+            from = {
+                renderIfPossible(source = "$source:transition_from")
+            },
+            to = {
+                transitionShowTarget = true
+                adoptTransitionTarget()
+                renderIfPossible(source = "$source:transition_switch")
+            },
+            onFrame = { alpha ->
+                transitionTextAlpha = alpha
+                renderIfPossible(source = "$source:transition_frame")
+            },
+            onComplete = {
+                transitionFromSpec = null
+                transitionToSpec = null
+                transitionToPhotoFrame = null
+                transitionShowTarget = false
+                transitionTextAlpha = 1f
+                diagnostics.log("transition_completed")
+                ensureBackgroundAndRender(source = "$source:transition_complete")
+            },
+        )
+    }
+
+    /** Cancels any in-flight transition. If [adoptTarget], the target cursor's background bookkeeping
+     * (loadedBackground/loadedAssetId/...) is adopted immediately so the next normal render shows it. */
+    private fun cancelTransition(reason: String, adoptTarget: Boolean) {
+        if (!isTransitioning) return
+        transitionDriver.cancel()
+        transitionPrepareJob?.cancel()
+        transitionPrepareJob = null
+        diagnostics.log("transition_cancelled", mapOf("reason" to reason))
+        if (adoptTarget) {
+            adoptTransitionTarget()
+        }
+        transitionFromSpec = null
+        transitionToSpec = null
+        transitionToPhotoFrame = null
+        transitionShowTarget = false
+        transitionTextAlpha = 1f
+    }
+
+    private fun adoptTransitionTarget() {
+        val toSpec = transitionToSpec ?: return
+        val photo = toSpec.background as? BackgroundSpec.Photo
+        val frame = transitionToPhotoFrame
+        if (photo != null && frame != null) {
+            val plan = photoLoadPlan(photo)
+            loadedBackground = frame
+            loadedAssetId = photo.assetId
+            loadedBlurPx = plan.blurPx
+            loadedProcessedWidth = plan.width
+            loadedProcessedHeight = plan.height
+        } else {
+            loadedBackground = null
+            loadedAssetId = null
+            loadedBlurPx = -1
+            loadedProcessedWidth = -1
+            loadedProcessedHeight = -1
+        }
+    }
+
+    private data class PhotoLoadPlan(val width: Int, val height: Int, val blurPx: Int)
+
+    private fun photoLoadPlan(photo: BackgroundSpec.Photo): PhotoLoadPlan {
+        val planned = ProcessedImageSizeCalculator.calculate(surfaceWidth, surfaceHeight, photo.blurRadiusDp)
+        val blurPx = ProcessedImageSizeCalculator.effectiveBlurRadiusPx(photo.blurRadiusDp, density)
+        return PhotoLoadPlan(planned.width, planned.height, blurPx)
     }
 
     private fun logCursorIfChanged(previous: PlaybackState, source: String) {
@@ -306,20 +476,36 @@ class WallpaperCoordinator(
     }
 
     private fun ensureBackgroundAndRender(source: String) {
+        if (isTransitioning) {
+            // The transition owns loadedBackground/from-to bookkeeping until it completes or is
+            // cancelled; just repaint the current transition frame instead of touching it.
+            renderIfPossible(source = source)
+            return
+        }
         val photo = currentPhotoBackground()
         if (photo == null) {
             cancelBackgroundLoad(reason = "non_photo")
             loadedBackground = null
             loadedAssetId = null
-            loadedBlurBucket = -1
+            loadedBlurPx = -1
+            loadedProcessedWidth = -1
+            loadedProcessedHeight = -1
             renderIfPossible(source = source)
             return
         }
-        val blurBucket = BackgroundBitmapCache.blurBucket(photo.blurRadiusDp)
+        val planned = ProcessedImageSizeCalculator.calculate(
+            surfaceWidth,
+            surfaceHeight,
+            photo.blurRadiusDp,
+        )
+        val blurPx = ProcessedImageSizeCalculator.effectiveBlurRadiusPx(photo.blurRadiusDp, density)
         if (loadedAssetId == photo.assetId &&
-            loadedBlurBucket == blurBucket &&
+            loadedBlurPx == blurPx &&
+            loadedProcessedWidth == planned.width &&
+            loadedProcessedHeight == planned.height &&
             loadedBackground != null
         ) {
+            // Dim-only change: redraw without re-decoding.
             loadedBackground = loadedBackground?.copy(dimAmount = photo.dimAmount)
             renderIfPossible(source = source)
             return
@@ -327,24 +513,31 @@ class WallpaperCoordinator(
         // Draw fallback immediately, then load asynchronously.
         loadedBackground = null
         loadedAssetId = null
-        loadedBlurBucket = -1
+        loadedBlurPx = -1
+        loadedProcessedWidth = -1
+        loadedProcessedHeight = -1
         renderIfPossible(source = source)
-        maybeStartBackgroundLoad(photo, force = true)
+        maybeStartBackgroundLoad(photo)
     }
 
-    private fun maybeStartBackgroundLoad(photo: BackgroundSpec.Photo, force: Boolean) {
+    private fun maybeStartBackgroundLoad(photo: BackgroundSpec.Photo) {
         val loader = imageLoader ?: return
         if (surfaceWidth <= 0 || surfaceHeight <= 0 || destroyed || !surfaceAvailable) return
-        val blurBucket = BackgroundBitmapCache.blurBucket(photo.blurRadiusDp)
+        val planned = ProcessedImageSizeCalculator.calculate(
+            surfaceWidth,
+            surfaceHeight,
+            photo.blurRadiusDp,
+        )
+        val blurPx = ProcessedImageSizeCalculator.effectiveBlurRadiusPx(photo.blurRadiusDp, density)
         val token = BackgroundLoadToken(
             surfaceGeneration = surfaceGeneration,
             collectionId = playbackState.cursor.collectionId ?: -1L,
             assetId = photo.assetId,
-            targetWidth = surfaceWidth,
-            targetHeight = surfaceHeight,
-            blurRadiusBucket = blurBucket,
+            processedWidth = planned.width,
+            processedHeight = planned.height,
+            effectiveBlurRadiusPx = blurPx,
         )
-        if (!force && pendingBackgroundToken == token) return
+        if (pendingBackgroundToken == token) return
         cancelBackgroundLoad(reason = "new_request")
         pendingBackgroundToken = token
         backgroundLoadJob = scope.launch {
@@ -384,14 +577,28 @@ class WallpaperCoordinator(
         val generation = surfaceGeneration
         rendering = true
         try {
-            val spec = WallpaperRenderSpecFactory.fromState(
-                collections = collections,
-                state = playbackState,
-                showEmptyHint = showEmptyHint && collections.isEmpty(),
-            )
-            val photoFrame = when (spec.background) {
-                is BackgroundSpec.Photo -> loadedBackground
-                else -> null
+            val transFrom = transitionFromSpec
+            val transTo = transitionToSpec
+            val spec: WallpaperRenderSpec
+            val photoFrame: PreparedPhotoFrame?
+            if (transFrom != null && transTo != null) {
+                val base = if (transitionShowTarget) transTo else transFrom
+                spec = base.copy(transitionTextAlpha = transitionTextAlpha)
+                photoFrame = if (base.background is BackgroundSpec.Photo) {
+                    if (transitionShowTarget) transitionToPhotoFrame else loadedBackground
+                } else {
+                    null
+                }
+            } else {
+                spec = WallpaperRenderSpecFactory.fromState(
+                    collections = collections,
+                    state = playbackState,
+                    showEmptyHint = showEmptyHint && collections.isEmpty(),
+                )
+                photoFrame = when (spec.background) {
+                    is BackgroundSpec.Photo -> loadedBackground
+                    else -> null
+                }
             }
             renderer.render(
                 holder = currentHolder,
@@ -411,4 +618,9 @@ class WallpaperCoordinator(
     internal fun isSurfaceAvailable(): Boolean = surfaceAvailable
     internal fun isDestroyed(): Boolean = destroyed
     internal fun loadedAssetIdForTest(): String? = loadedAssetId
+    internal fun isTransitioningForTest(): Boolean = isTransitioning
+
+    private companion object {
+        const val TRANSITION_PHOTO_WAIT_MILLIS = 300L
+    }
 }

@@ -40,7 +40,11 @@ class CanvasWallpaperRendererTest {
             renderSpec = WallpaperRenderSpec(
                 background = BackgroundSpec.Solid("#112233"),
                 text = "你好 WallQuote\nHello 🙂",
-                textStyle = TextStyleConfig(isBold = true, isItalic = true, alignment = 0),
+                textStyle = TextStyleConfig(
+                    isBold = true,
+                    isItalic = true,
+                    horizontalAlignment = com.example.wallquote.domain.model.HorizontalTextAlignment.Start,
+                ),
                 transform = QuoteTransform(0.5f, 0.4f, 15f),
             ),
         )

@@ -18,7 +18,11 @@ interface BackgroundAssetStore {
         draftId: String,
     ): StagedBackgroundAsset
 
-    suspend fun commit(stagedAsset: StagedBackgroundAsset): BackgroundAssetId
+    /**
+     * Creates a formal file from staging without deleting the staging file.
+     * On failure, any partial formal file is removed and staging remains usable.
+     */
+    suspend fun prepareFormalAsset(stagedAsset: StagedBackgroundAsset): BackgroundAssetId
 
     suspend fun discardStaging(stagedAsset: StagedBackgroundAsset)
 

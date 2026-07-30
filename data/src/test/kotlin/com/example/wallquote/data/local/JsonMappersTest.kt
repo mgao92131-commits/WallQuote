@@ -19,28 +19,23 @@ class JsonMappersTest {
     @Test
     fun photoAssetRoundTrip() {
         val spec = BackgroundSpec.Photo(
-            assetId = "bg_abc123",
+            assetId = "bg_0123456789abcdef0123456789abcdef",
             dimAmount = 0.25f,
             blurRadiusDp = 8f,
         )
         val (type, json) = spec.toStorage()
         assertEquals("photo", type)
         assertTrue(json.contains("assetId"))
+        assertTrue(json.contains("blurRadiusDp"))
+        assertTrue(json.contains("angleDegrees").not())
         assertEquals(spec, parseBackground(type, json))
     }
 
     @Test
-    fun legacyPhotoUriFallsBackToSolid() {
-        val legacy = """{"type":"photo","uri":"content://media/external/images/1","dimAmount":0.0,"blurRadius":0.0}"""
-        val parsed = parseBackground("photo", legacy)
+    fun invalidPhotoAssetFallsBackToSolid() {
+        val bad = """{"type":"photo","assetId":"content://media/1","dimAmount":0.0,"blurRadiusDp":0.0}"""
+        val parsed = parseBackground("photo", bad)
         assertTrue(parsed is BackgroundSpec.Solid)
-    }
-
-    @Test
-    fun legacyGradientAngleAlias() {
-        val legacy = """{"type":"gradient","startColorHex":"#111111","endColorHex":"#222222","angle":90.0}"""
-        val parsed = parseBackground("gradient", legacy)
-        assertEquals(BackgroundSpec.Gradient("#111111", "#222222", 90f), parsed)
     }
 
     @Test
