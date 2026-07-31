@@ -1,9 +1,11 @@
 package com.example.wallquote.ui.editor
 
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,7 +42,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -55,7 +56,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -63,19 +66,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wallquote.core.preview.QuotePreview
 import com.example.wallquote.core.preview.parseColorHex
 import com.example.wallquote.domain.automatch.TextStyleSuggestion
-import com.example.wallquote.domain.layout.MeasuredQuoteText
-import com.example.wallquote.domain.layout.QuoteBlockLayoutCalculator
+import com.example.wallquote.domain.layout.QuoteGestureTransformer
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CustomTextStyle
-import com.example.wallquote.domain.model.HorizontalTextAlignment
 import com.example.wallquote.domain.model.QuoteLine
 import com.example.wallquote.domain.model.QuoteRenderInput
 import com.example.wallquote.domain.model.QuoteTransform
-import com.example.wallquote.domain.model.SystemFontFamily
 import com.example.wallquote.domain.model.TextStyleConfig
 import com.example.wallquote.domain.style.BuiltInTextStylePresets
-import com.example.wallquote.domain.style.QuoteTransformNormalizer
 import com.example.wallquote.domain.style.TextStyleNormalizer
+import com.example.wallquote.ui.style.StyleSection
+import com.example.wallquote.ui.style.StyleSectionContent
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -168,6 +169,22 @@ fun EditorScreen(
                 contentAlignment = Alignment.Center,
             ) { Text("加载中…") }
         } else {
+            val density = LocalDensity.current
+            // Single unified transform-update path (P4-013 follow-up): both the gesture drag in
+            // EditorPreviewArea and the sliders in LayoutAdjustControls funnel their *raw*
+            // transform through this same lambda, which delegates to
+            // EditorViewModel.updateTransformRequested to clamp via
+            // QuoteBlockLayoutCalculator.clampTransform. Previously only the gesture path
+            // clamped against the rotated text bounding box; the sliders called
+            // viewModel::updateTransform directly and only relied on the 0..1 slider range,
+            // which does not account for rotation or text size.
+            val provisionalTextHeightPx = with(density) {
+                val normalizedStyle = TextStyleNormalizer.normalize(state.textStyle)
+                (normalizedStyle.textSizeSp * normalizedStyle.lineHeightMultiplier * 3).sp.toPx()
+            }
+            val onTransformRequested: (QuoteTransform) -> Unit = { raw ->
+                viewModel.updateTransformRequested(raw, provisionalTextHeightPx, density.density)
+            }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -176,7 +193,8 @@ fun EditorScreen(
                 EditorPreviewArea(
                     state = state,
                     onLayoutAdjustToggle = viewModel::setLayoutAdjustEnabled,
-                    onTransformChange = viewModel::updateTransform,
+                    onTransformChange = onTransformRequested,
+                    onViewportSizeChanged = viewModel::setPreviewViewportSize,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -184,7 +202,7 @@ fun EditorScreen(
                 if (state.layoutAdjustEnabled) {
                     LayoutAdjustControls(
                         transform = state.transform,
-                        onTransformChange = viewModel::updateTransform,
+                        onTransformChange = onTransformRequested,
                         onResetCenter = viewModel::resetCenter,
                         onResetRotation = viewModel::resetRotation,
                     )
@@ -249,6 +267,8 @@ fun EditorScreen(
                     )
                     EditorTab.Style -> StyleTabContent(
                         style = state.textStyle,
+                        previewInputBase = state.toPreviewInput(),
+                        processedPhotoBitmap = state.processedPreviewBitmap,
                         customStyles = state.customStyles,
                         autoMatchAvailable = state.isAutoMatchAvailable,
                         autoMatchLoading = state.autoMatchLoading,
@@ -307,26 +327,31 @@ private fun EditorUiState.toPreviewInput(): QuoteRenderInput {
         background = backgroundSpec,
         lines = quoteLines,
         previewLineIndex = previewTextIndex,
-        textStyle = textStyle,
+        // The preview must show a pending Auto Match suggestion without mutating the formal
+        // textStyle (see EditorUiState.previewTextStyle / P4-005).
+        textStyle = previewTextStyle,
         transform = transform,
     )
 }
 
 /**
  * Wraps [QuotePreview] with an optional "layout adjust" overlay: a drag surface that moves the
- * quote's pivot, clamped via [QuoteBlockLayoutCalculator.clampTransform] so it can't drag fully
- * off-screen, plus a toggle chip in the corner.
+ * quote's pivot, plus a toggle chip in the corner. Emits the *raw* (unclamped) transform via
+ * [onTransformChange]; clamping against the rotated text bounding box happens once, in
+ * [EditorViewModel.updateTransformRequested], shared with the [LayoutAdjustControls] sliders.
  */
 @Composable
 private fun EditorPreviewArea(
     state: EditorUiState,
     onLayoutAdjustToggle: (Boolean) -> Unit,
     onTransformChange: (QuoteTransform) -> Unit,
+    onViewportSizeChanged: (widthPx: Int, heightPx: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val latestState = rememberUpdatedState(state)
-    val density = LocalDensity.current
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier.onSizeChanged { onViewportSizeChanged(it.width, it.height) },
+    ) {
         QuotePreview(
             state = state.toPreviewInput(),
             modifier = Modifier.fillMaxSize(),
@@ -343,30 +368,19 @@ private fun EditorPreviewArea(
                             val heightPx = size.height
                             if (widthPx <= 0 || heightPx <= 0) return@detectTransformGestures
                             val current = latestState.value
-                            val style = TextStyleNormalizer.normalize(current.textStyle)
-                            val dxFraction = pan.x / widthPx
-                            val dyFraction = pan.y / heightPx
-                            val rawTransform = QuoteTransformNormalizer.normalize(
-                                centerXFraction = current.transform.centerXFraction + dxFraction,
-                                centerYFraction = current.transform.centerYFraction + dyFraction,
-                                rotationDegrees = current.transform.rotationDegrees +
-                                    Math.toDegrees(rotation.toDouble()).toFloat(),
+                            // `rotation` from detectTransformGestures is already in degrees; do
+                            // not re-convert with Math.toDegrees (that treated it as radians and
+                            // produced wildly exaggerated rotation). QuoteGestureTransformer is
+                            // the shared domain helper for this pan+rotate -> QuoteTransform math.
+                            val rawTransform = QuoteGestureTransformer.apply(
+                                current = current.transform,
+                                panX = pan.x,
+                                panY = pan.y,
+                                viewportWidth = widthPx,
+                                viewportHeight = heightPx,
+                                rotationDeltaDegrees = rotation,
                             )
-                            val provisionalHeightPx = with(density) {
-                                (style.textSizeSp * style.lineHeightMultiplier * 3).sp.toPx()
-                            }
-                            val clamped = QuoteBlockLayoutCalculator.clampTransform(
-                                surfaceWidth = widthPx,
-                                surfaceHeight = heightPx,
-                                transform = rawTransform,
-                                measuredText = MeasuredQuoteText(
-                                    widthPx = widthPx * 0.84f,
-                                    heightPx = provisionalHeightPx,
-                                ),
-                                style = style,
-                                density = density.density,
-                            )
-                            onTransformChange(clamped)
+                            onTransformChange(rawTransform)
                         }
                     },
             )
@@ -382,6 +396,13 @@ private fun EditorPreviewArea(
     }
 }
 
+/**
+ * Sliders for pivot position and rotation. Each `onValueChange` emits the *raw* candidate
+ * transform (0..1 slider range for position); [onTransformChange] is expected to clamp it the
+ * same way the drag gesture in [EditorPreviewArea] does (see
+ * [EditorViewModel.updateTransformRequested]) so the block can't be dragged fully off-screen via
+ * the sliders either.
+ */
 @Composable
 private fun LayoutAdjustControls(
     transform: QuoteTransform,
@@ -650,27 +671,11 @@ private fun ContentTabContent(
     }
 }
 
-private enum class StyleSection(val label: String) {
-    Text("文字"),
-    Block("文字块"),
-    Border("边框"),
-    Shadow("阴影"),
-    Align("对齐"),
-}
-
-private val TextColorPresets = listOf("#FFFFFF", "#1A1A1A", "#FFD54F", "#A3BE8C", "#88C0D0")
-private val BlockColorPresets = listOf("#000000", "#FFFFFF", "#2E3440", "#3B4252")
-private val ShadowColorPresets = listOf("#000000", "#FFFFFF")
-private val FontFamilyOptions = listOf(
-    SystemFontFamily.Serif to "衬线",
-    SystemFontFamily.SansSerif to "无衬线",
-    SystemFontFamily.Monospace to "等宽",
-    SystemFontFamily.Cursive to "手写体",
-)
-
 @Composable
 private fun StyleTabContent(
     style: TextStyleConfig,
+    previewInputBase: QuoteRenderInput,
+    processedPhotoBitmap: Bitmap?,
     customStyles: List<CustomTextStyle>,
     autoMatchAvailable: Boolean,
     autoMatchLoading: Boolean,
@@ -695,12 +700,17 @@ private fun StyleTabContent(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("预设样式", style = MaterialTheme.typography.titleSmall)
+            // Visual cards (P4-010): each renders the real QuotePreview with the current
+            // background/text/photo so the user can compare presets against their own content,
+            // rather than an abstract FilterChip label.
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(BuiltInTextStylePresets.all, key = { it.id }) { preset ->
-                    FilterChip(
+                    PresetStyleCard(
+                        displayName = preset.displayName,
                         selected = style == preset.style,
+                        previewInput = previewInputBase.copy(textStyle = preset.style),
+                        processedPhotoBitmap = processedPhotoBitmap,
                         onClick = { onApplyPreset(preset.id) },
-                        label = { Text(preset.displayName) },
                     )
                 }
             }
@@ -766,13 +776,7 @@ private fun StyleTabContent(
             }
         }
 
-        when (section) {
-            StyleSection.Text -> TextStyleTextSection(style, onStyleChange)
-            StyleSection.Block -> TextStyleBlockSection(style, onStyleChange)
-            StyleSection.Border -> TextStyleBorderSection(style, onStyleChange)
-            StyleSection.Shadow -> TextStyleShadowSection(style, onStyleChange)
-            StyleSection.Align -> TextStyleAlignSection(style, onStyleChange)
-        }
+        StyleSectionContent(section = section, style = style, onStyleChange = onStyleChange)
     }
 
     if (showSaveAsDialog) {
@@ -803,319 +807,40 @@ private fun StyleTabContent(
     }
 }
 
+/** ~120dp-tall preview card for a built-in style preset (P4-010). */
 @Composable
-private fun ColorSwatchRow(
-    selectedHex: String?,
-    colors: List<String>,
-    onSelect: (String) -> Unit,
+private fun PresetStyleCard(
+    displayName: String,
+    selected: Boolean,
+    previewInput: QuoteRenderInput,
+    processedPhotoBitmap: Bitmap?,
+    onClick: () -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        colors.forEach { hex ->
-            Box(
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .width(96.dp)
+            .height(120.dp),
+        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            QuotePreview(
+                state = previewInput,
                 modifier = Modifier
-                    .height(32.dp)
-                    .width(32.dp)
-                    .clip(CircleShape)
-                    .background(parseColorHex(hex))
-                    .border(
-                        width = if (selectedHex.equals(hex, ignoreCase = true)) 3.dp else 1.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = CircleShape,
-                    )
-                    .clickable { onSelect(hex) },
+                    .fillMaxWidth()
+                    .weight(1f),
+                processedPhotoBitmap = processedPhotoBitmap,
+            )
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp, horizontal = 2.dp),
             )
         }
     }
 }
 
-@Composable
-private fun HexColorField(
-    label: String,
-    hex: String,
-    onHexChange: (String) -> Unit,
-) {
-    OutlinedTextField(
-        value = hex,
-        onValueChange = onHexChange,
-        label = { Text(label) },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-}
-
-@Composable
-private fun TextStyleTextSection(
-    style: TextStyleConfig,
-    onStyleChange: ((TextStyleConfig) -> TextStyleConfig) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("文字颜色")
-        ColorSwatchRow(
-            selectedHex = style.colorHex,
-            colors = TextColorPresets,
-            onSelect = { hex -> onStyleChange { it.copy(colorHex = hex) } },
-        )
-        HexColorField("自定义颜色 (#RRGGBB)", style.colorHex) { hex ->
-            onStyleChange { it.copy(colorHex = hex) }
-        }
-
-        Text("不透明度：${(style.textAlpha * 100).roundToInt()}%")
-        Slider(
-            value = style.textAlpha,
-            onValueChange = { v -> onStyleChange { it.copy(textAlpha = v) } },
-            valueRange = 0f..1f,
-        )
-
-        Text("字号：${style.textSizeSp.roundToInt()} sp")
-        Slider(
-            value = style.textSizeSp,
-            onValueChange = { v -> onStyleChange { it.copy(textSizeSp = v) } },
-            valueRange = 12f..96f,
-        )
-
-        Text("字体")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FontFamilyOptions.forEach { (family, label) ->
-                FilterChip(
-                    selected = style.fontFamily == family,
-                    onClick = { onStyleChange { it.copy(fontFamily = family) } },
-                    label = { Text(label) },
-                )
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = style.isBold,
-                onClick = { onStyleChange { it.copy(isBold = !it.isBold) } },
-                label = { Text("粗体") },
-            )
-            FilterChip(
-                selected = style.isItalic,
-                onClick = { onStyleChange { it.copy(isItalic = !it.isItalic) } },
-                label = { Text("斜体") },
-            )
-        }
-
-        Text("字间距：${"%.2f".format(style.letterSpacingEm)} em")
-        Slider(
-            value = style.letterSpacingEm,
-            onValueChange = { v -> onStyleChange { it.copy(letterSpacingEm = v) } },
-            valueRange = -0.05f..0.5f,
-        )
-
-        Text("行高：${"%.2f".format(style.lineHeightMultiplier)}×")
-        Slider(
-            value = style.lineHeightMultiplier,
-            onValueChange = { v -> onStyleChange { it.copy(lineHeightMultiplier = v) } },
-            valueRange = 0.8f..2.0f,
-        )
-    }
-}
-
-@Composable
-private fun TextStyleAlignSection(
-    style: TextStyleConfig,
-    onStyleChange: ((TextStyleConfig) -> TextStyleConfig) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("水平对齐")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                HorizontalTextAlignment.Start to "左",
-                HorizontalTextAlignment.Center to "中",
-                HorizontalTextAlignment.End to "右",
-            ).forEach { (align, label) ->
-                FilterChip(
-                    selected = style.horizontalAlignment == align,
-                    onClick = { onStyleChange { it.copy(horizontalAlignment = align) } },
-                    label = { Text(label) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TextStyleBlockSection(
-    style: TextStyleConfig,
-    onStyleChange: ((TextStyleConfig) -> TextStyleConfig) -> Unit,
-) {
-    val enabled = style.blockColorHex != null && style.blockAlpha > 0f
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("启用文字块背景")
-            Switch(
-                checked = enabled,
-                onCheckedChange = { checked ->
-                    onStyleChange {
-                        if (checked) {
-                            it.copy(
-                                blockColorHex = it.blockColorHex ?: "#000000",
-                                blockAlpha = if (it.blockAlpha > 0f) it.blockAlpha else 0.45f,
-                                blockPaddingDp = if (it.blockPaddingDp > 0f) it.blockPaddingDp else 14f,
-                                blockCornerRadiusDp = if (it.blockCornerRadiusDp > 0f) it.blockCornerRadiusDp else 10f,
-                            )
-                        } else {
-                            it.copy(blockColorHex = null, blockAlpha = 0f)
-                        }
-                    }
-                },
-            )
-        }
-        if (enabled) {
-            Text("背景颜色")
-            ColorSwatchRow(
-                selectedHex = style.blockColorHex,
-                colors = BlockColorPresets,
-                onSelect = { hex -> onStyleChange { it.copy(blockColorHex = hex) } },
-            )
-            HexColorField("自定义颜色 (#RRGGBB)", style.blockColorHex.orEmpty()) { hex ->
-                onStyleChange { it.copy(blockColorHex = hex) }
-            }
-            Text("不透明度：${(style.blockAlpha * 100).roundToInt()}%")
-            Slider(
-                value = style.blockAlpha,
-                onValueChange = { v -> onStyleChange { it.copy(blockAlpha = v) } },
-                valueRange = 0f..1f,
-            )
-            Text("内边距：${style.blockPaddingDp.roundToInt()} dp")
-            Slider(
-                value = style.blockPaddingDp,
-                onValueChange = { v -> onStyleChange { it.copy(blockPaddingDp = v) } },
-                valueRange = 0f..48f,
-            )
-            Text("圆角：${style.blockCornerRadiusDp.roundToInt()} dp")
-            Slider(
-                value = style.blockCornerRadiusDp,
-                onValueChange = { v -> onStyleChange { it.copy(blockCornerRadiusDp = v) } },
-                valueRange = 0f..48f,
-            )
-        }
-    }
-}
-
-@Composable
-private fun TextStyleBorderSection(
-    style: TextStyleConfig,
-    onStyleChange: ((TextStyleConfig) -> TextStyleConfig) -> Unit,
-) {
-    val enabled = style.blockBorderWidthDp > 0f && style.blockBorderColorHex != null
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("启用边框")
-            Switch(
-                checked = enabled,
-                onCheckedChange = { checked ->
-                    onStyleChange {
-                        if (checked) {
-                            it.copy(
-                                blockBorderWidthDp = if (it.blockBorderWidthDp > 0f) it.blockBorderWidthDp else 1.5f,
-                                blockBorderColorHex = it.blockBorderColorHex ?: "#FFFFFF",
-                                blockBorderAlpha = if (it.blockBorderAlpha > 0f) it.blockBorderAlpha else 1f,
-                            )
-                        } else {
-                            it.copy(blockBorderWidthDp = 0f)
-                        }
-                    }
-                },
-            )
-        }
-        if (enabled) {
-            Text("边框颜色")
-            ColorSwatchRow(
-                selectedHex = style.blockBorderColorHex,
-                colors = BlockColorPresets,
-                onSelect = { hex -> onStyleChange { it.copy(blockBorderColorHex = hex) } },
-            )
-            HexColorField("自定义颜色 (#RRGGBB)", style.blockBorderColorHex.orEmpty()) { hex ->
-                onStyleChange { it.copy(blockBorderColorHex = hex) }
-            }
-            Text("宽度：${"%.1f".format(style.blockBorderWidthDp)} dp")
-            Slider(
-                value = style.blockBorderWidthDp,
-                onValueChange = { v -> onStyleChange { it.copy(blockBorderWidthDp = v) } },
-                valueRange = 0f..8f,
-            )
-            Text("不透明度：${(style.blockBorderAlpha * 100).roundToInt()}%")
-            Slider(
-                value = style.blockBorderAlpha,
-                onValueChange = { v -> onStyleChange { it.copy(blockBorderAlpha = v) } },
-                valueRange = 0f..1f,
-            )
-        }
-    }
-}
-
-@Composable
-private fun TextStyleShadowSection(
-    style: TextStyleConfig,
-    onStyleChange: ((TextStyleConfig) -> TextStyleConfig) -> Unit,
-) {
-    val enabled = style.shadowAlpha > 0f && (style.shadowRadiusDp > 0f || style.shadowDistanceDp > 0f)
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("启用阴影")
-            Switch(
-                checked = enabled,
-                onCheckedChange = { checked ->
-                    onStyleChange {
-                        if (checked) {
-                            it.copy(
-                                shadowRadiusDp = if (it.shadowRadiusDp > 0f) it.shadowRadiusDp else 8f,
-                                shadowDistanceDp = if (it.shadowDistanceDp > 0f) it.shadowDistanceDp else 4f,
-                                shadowAlpha = if (it.shadowAlpha > 0f) it.shadowAlpha else 0.45f,
-                            )
-                        } else {
-                            it.copy(shadowAlpha = 0f)
-                        }
-                    }
-                },
-            )
-        }
-        if (enabled) {
-            Text("阴影颜色")
-            ColorSwatchRow(
-                selectedHex = style.shadowColorHex,
-                colors = ShadowColorPresets,
-                onSelect = { hex -> onStyleChange { it.copy(shadowColorHex = hex) } },
-            )
-            Text("模糊半径：${style.shadowRadiusDp.roundToInt()} dp")
-            Slider(
-                value = style.shadowRadiusDp,
-                onValueChange = { v -> onStyleChange { it.copy(shadowRadiusDp = v) } },
-                valueRange = 0f..32f,
-            )
-            Text("偏移距离：${style.shadowDistanceDp.roundToInt()} dp")
-            Slider(
-                value = style.shadowDistanceDp,
-                onValueChange = { v -> onStyleChange { it.copy(shadowDistanceDp = v) } },
-                valueRange = 0f..32f,
-            )
-            Text("角度：${style.shadowAngleDegrees.roundToInt()}°")
-            Slider(
-                value = style.shadowAngleDegrees,
-                onValueChange = { v -> onStyleChange { it.copy(shadowAngleDegrees = v) } },
-                valueRange = 0f..360f,
-            )
-            Text("不透明度：${(style.shadowAlpha * 100).roundToInt()}%")
-            Slider(
-                value = style.shadowAlpha,
-                onValueChange = { v -> onStyleChange { it.copy(shadowAlpha = v) } },
-                valueRange = 0f..1f,
-            )
-        }
-    }
-}
