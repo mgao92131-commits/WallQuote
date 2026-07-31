@@ -8,11 +8,14 @@ import com.example.wallquote.automatch.BackgroundSampler
 import com.example.wallquote.domain.CollectionDefaults
 import com.example.wallquote.domain.CollectionValidation
 import com.example.wallquote.domain.automatch.AutoStyleMatcher
+import com.example.wallquote.domain.automatch.autoMatchKey
 import com.example.wallquote.domain.background.BackgroundAssetId
 import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.background.BackgroundValidation
 import com.example.wallquote.domain.background.StagedBackgroundAsset
 import com.example.wallquote.domain.editor.EditorDraft
+import com.example.wallquote.domain.layout.MeasuredQuoteText
+import com.example.wallquote.domain.layout.QuoteBlockLayoutCalculator
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.domain.model.DailyTimeRange
@@ -22,6 +25,7 @@ import com.example.wallquote.domain.model.QuoteTransform
 import com.example.wallquote.domain.model.TextStyleConfig
 import com.example.wallquote.domain.style.BuiltInTextStylePresets
 import com.example.wallquote.domain.style.QuoteTransformNormalizer
+import com.example.wallquote.domain.style.TextStyleNormalizer
 import com.example.wallquote.domain.time.minuteFromHalfHourIndex
 import com.example.wallquote.domain.usecase.CreateStyleFromCollectionUseCase
 import com.example.wallquote.domain.usecase.GetCollectionUseCase
@@ -67,6 +71,13 @@ class EditorViewModel @Inject constructor(
     private var nextClientKey = -1L
     private var photoImportGeneration = 0L
     private var previewProcessJob: Job? = null
+
+    /**
+     * Bumped whenever the background (or its dim/blur) changes or a new Auto Match request
+     * starts, so an in-flight sampling result can detect it has become stale and be dropped
+     * instead of being applied on top of a background/style the user already moved on from.
+     */
+    private var autoMatchGeneration = 0L
 
     private fun newClientKey(): Long {
         val key = nextClientKey
@@ -233,6 +244,19 @@ class EditorViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Marks any pending/previewed Auto Match suggestion as stale: bumps [autoMatchGeneration] so
+     * an in-flight sampling result is dropped on arrival, and clears a suggestion already being
+     * previewed since it was computed for a background that no longer applies. Also clears
+     * [EditorUiState.autoMatchLoading] immediately (rather than leaving it to the now-superseded
+     * request) since that request's completion will see the generation mismatch and skip
+     * updating loading state itself, which would otherwise leave the spinner stuck on.
+     */
+    private fun invalidateAutoMatch() {
+        autoMatchGeneration++
+        _uiState.update { it.copy(autoMatchSuggestion = null, autoMatchLoading = false) }
+    }
+
     fun selectTab(tab: EditorTab?) {
         _uiState.update { it.copy(selectedTab = tab) }
     }
@@ -250,6 +274,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun setSolidBackground(hex: String) {
+        invalidateAutoMatch()
         viewModelScope.launch {
             discardCurrentStaging()
             _uiState.update {
@@ -269,6 +294,7 @@ class EditorViewModel @Inject constructor(
         endHex: String = "#5E81AC",
         angleDegrees: Float = 90f,
     ) {
+        invalidateAutoMatch()
         viewModelScope.launch {
             discardCurrentStaging()
             _uiState.update {
@@ -288,6 +314,7 @@ class EditorViewModel @Inject constructor(
         endHex: String? = null,
         angleDegrees: Float? = null,
     ) {
+        invalidateAutoMatch()
         _uiState.update { state ->
             val current = state.backgroundSpec as? BackgroundSpec.Gradient
                 ?: BackgroundSpec.Gradient("#2E3440", "#5E81AC", 90f)
@@ -302,6 +329,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun swapGradientColors() {
+        invalidateAutoMatch()
         _uiState.update { state ->
             val current = state.backgroundSpec as? BackgroundSpec.Gradient ?: return@update state
             state.copy(
@@ -314,6 +342,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun selectPhotoKind() {
+        invalidateAutoMatch()
         _uiState.update { state ->
             when (state.backgroundSpec) {
                 is BackgroundSpec.Photo -> state
@@ -367,6 +396,7 @@ class EditorViewModel @Inject constructor(
                     return@launch
                 }
                 val path = assetStore.resolveStagingPath(newStaging)
+                invalidateAutoMatch()
                 _uiState.update {
                     it.copy(
                         backgroundSpec = BackgroundSpec.Photo(
@@ -405,6 +435,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun setPhotoDim(dimAmount: Float) {
+        invalidateAutoMatch()
         _uiState.update { state ->
             val photo = state.backgroundSpec as? BackgroundSpec.Photo ?: return@update state
             state.copy(backgroundSpec = photo.copy(dimAmount = dimAmount.coerceIn(0f, 1f)))
@@ -412,6 +443,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun setPhotoBlur(blurRadiusDp: Float) {
+        invalidateAutoMatch()
         _uiState.update { state ->
             val photo = state.backgroundSpec as? BackgroundSpec.Photo ?: return@update state
             state.copy(backgroundSpec = photo.copy(blurRadiusDp = blurRadiusDp.coerceIn(0f, 25f)))
@@ -420,6 +452,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun removePhoto() {
+        invalidateAutoMatch()
         viewModelScope.launch {
             discardCurrentStaging()
             _uiState.update {
@@ -467,14 +500,12 @@ class EditorViewModel @Inject constructor(
     }
 
     fun updateTextStyle(transform: (TextStyleConfig) -> TextStyleConfig) {
-        _uiState.update { it.copy(textStyle = transform(it.textStyle)) }
+        _uiState.update { it.copy(textStyle = transform(it.textStyle), autoMatchSuggestion = null) }
     }
 
-    /** Fully replaces the current style, e.g. from a built-in preset, custom style, or Auto Match. */
+    /** Fully replaces the current (formal) style, e.g. from a built-in preset or custom style. */
     fun applyTextStyle(style: TextStyleConfig) {
-        _uiState.update {
-            it.copy(textStyle = style, autoMatchSuggestion = null, autoMatchBaselineStyle = null)
-        }
+        _uiState.update { it.copy(textStyle = style, autoMatchSuggestion = null) }
     }
 
     fun applyPreset(id: String) {
@@ -518,6 +549,48 @@ class EditorViewModel @Inject constructor(
         _uiState.update { it.copy(transform = normalized) }
     }
 
+    /** Records the preview area's measured size so [updateTransformRequested] can clamp against it. */
+    fun setPreviewViewportSize(widthPx: Int, heightPx: Int) {
+        if (widthPx <= 0 || heightPx <= 0) return
+        _uiState.update { it.copy(previewViewportWidthPx = widthPx, previewViewportHeightPx = heightPx) }
+    }
+
+    /**
+     * Single entry point for both gesture-driven (pan/rotate on the preview) and slider-driven
+     * (`LayoutAdjustControls`) transform edits (P4-013 follow-up). Both call sites previously
+     * diverged: the gesture path clamped via [QuoteBlockLayoutCalculator.clampTransform] against
+     * the rotated text bounding box, while the sliders called [updateTransform] directly and
+     * relied only on their 0..1 / -180..180 ranges, so a rotated block could still be dragged
+     * mostly off-screen with the sliders. [rawTransform] is the unclamped candidate; when the
+     * preview viewport hasn't been measured yet, this falls back to just normalizing it.
+     */
+    fun updateTransformRequested(
+        rawTransform: QuoteTransform,
+        provisionalTextHeightPx: Float,
+        density: Float,
+    ) {
+        val state = _uiState.value
+        val width = state.previewViewportWidthPx
+        val height = state.previewViewportHeightPx
+        if (width <= 0 || height <= 0) {
+            updateTransform(rawTransform)
+            return
+        }
+        val style = TextStyleNormalizer.normalize(state.textStyle)
+        val clamped = QuoteBlockLayoutCalculator.clampTransform(
+            surfaceWidth = width,
+            surfaceHeight = height,
+            transform = rawTransform,
+            measuredText = MeasuredQuoteText(
+                widthPx = width * 0.84f,
+                heightPx = provisionalTextHeightPx,
+            ),
+            style = style,
+            density = density,
+        )
+        updateTransform(clamped)
+    }
+
     fun resetCenter() {
         _uiState.update {
             it.copy(transform = it.transform.copy(centerXFraction = 0.5f, centerYFraction = 0.5f))
@@ -528,43 +601,59 @@ class EditorViewModel @Inject constructor(
         _uiState.update { it.copy(transform = it.transform.copy(rotationDegrees = 0f)) }
     }
 
-    /** Samples the current background and previews a contrast-safe style; user must confirm or undo. */
+    /**
+     * Samples the current background and computes a contrast-safe suggestion for the preview
+     * only ([EditorUiState.previewTextStyle]); the formal [EditorUiState.textStyle] is left
+     * untouched until [confirmAutoMatch]. The result is dropped if, by the time sampling
+     * completes, the request generation, background (including dim/blur), or baseline text
+     * style have moved on (see [EditorUiState.previewTextStyle] doc and [autoMatchKey]).
+     */
     fun requestAutoMatch() {
         val state = _uiState.value
         if (!state.isAutoMatchAvailable || state.autoMatchLoading) return
+        val generation = ++autoMatchGeneration
+        val requestBackgroundKey = state.backgroundSpec.autoMatchKey()
+        val baseline = state.textStyle
         viewModelScope.launch {
             _uiState.update { it.copy(autoMatchLoading = true, errorMessage = null) }
             val sample = runCatching {
                 backgroundSampler.sample(state.backgroundSpec, state.processedPreviewBitmap)
             }.getOrNull()
+
+            val current = _uiState.value
+            val stale = generation != autoMatchGeneration ||
+                current.backgroundSpec.autoMatchKey() != requestBackgroundKey ||
+                current.textStyle != baseline
+            if (stale) {
+                // Only clear the loading flag if this is still the most recent request; an even
+                // newer request's own loading state must not be clobbered.
+                if (generation == autoMatchGeneration) {
+                    _uiState.update { it.copy(autoMatchLoading = false) }
+                }
+                return@launch
+            }
             if (sample == null) {
                 _uiState.update {
                     it.copy(autoMatchLoading = false, errorMessage = "自动匹配失败，请重试")
                 }
                 return@launch
             }
-            val baseline = _uiState.value.textStyle
             val suggestion = AutoStyleMatcher.suggest(sample, baseline)
-            _uiState.update {
-                it.copy(
-                    autoMatchLoading = false,
-                    autoMatchSuggestion = suggestion,
-                    autoMatchBaselineStyle = baseline,
-                    textStyle = suggestion.style,
-                )
-            }
+            _uiState.update { it.copy(autoMatchLoading = false, autoMatchSuggestion = suggestion) }
         }
     }
 
+    /** Applies the previewed suggestion to the formal style and clears the pending preview. */
     fun confirmAutoMatch() {
-        _uiState.update { it.copy(autoMatchSuggestion = null, autoMatchBaselineStyle = null) }
+        _uiState.update { state ->
+            val suggestion = state.autoMatchSuggestion ?: return@update state
+            state.copy(textStyle = suggestion.style, autoMatchSuggestion = null)
+        }
     }
 
+    /** Discards the previewed suggestion; [EditorUiState.textStyle] was never mutated, so there is nothing to restore. */
     fun undoAutoMatch() {
-        _uiState.update { state ->
-            val baseline = state.autoMatchBaselineStyle ?: return@update state
-            state.copy(textStyle = baseline, autoMatchSuggestion = null, autoMatchBaselineStyle = null)
-        }
+        _uiState.update { it.copy(autoMatchSuggestion = null) }
     }
 
     fun clearError() {

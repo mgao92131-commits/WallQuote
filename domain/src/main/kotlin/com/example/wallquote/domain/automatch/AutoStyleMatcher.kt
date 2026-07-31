@@ -7,6 +7,9 @@ data class BackgroundSample(
     val contrastWithWhite: Float,
     val contrastWithBlack: Float,
     val visualComplexity: Float,
+    /** Darkest/lightest luminance seen across the sampled region; defaults to [averageLuminance]. */
+    val minimumLuminance: Float = averageLuminance,
+    val maximumLuminance: Float = averageLuminance,
 )
 
 data class TextStyleSuggestion(
@@ -46,10 +49,14 @@ object AutoStyleMatcher {
     ): TextStyleSuggestion {
         val preferWhite = sample.contrastWithWhite >= sample.contrastWithBlack
         val textColor = if (preferWhite) "#FFFFFF" else "#1A1A1A"
-        val textLum = if (preferWhite) 1f else Contrast.relativeLuminance(0xFF1A1A1AL)
-        val contrast = if (preferWhite) sample.contrastWithWhite else sample.contrastWithBlack
-        val complex = sample.visualComplexity >= 0.35f ||
-            (sample.contrastWithWhite < TARGET_CONTRAST && sample.contrastWithBlack < TARGET_CONTRAST)
+        // P4-006: contrastWithBlack/contrastWithWhite are measured against pure #000000/#FFFFFF,
+        // but the actual dark text color is #1A1A1A, not pure black. #1A1A1A has a higher
+        // luminance than pure black, so its real contrast can fall below TARGET_CONTRAST even
+        // when contrastWithBlack looks safe. Compute contrast against the actual text color.
+        val textArgb = if (preferWhite) 0xFFFFFFFFL else 0xFF1A1A1AL
+        val textLum = Contrast.relativeLuminance(textArgb)
+        val contrast = Contrast.contrastRatio(sample.averageLuminance, textLum)
+        val complex = sample.visualComplexity >= 0.35f || contrast < TARGET_CONTRAST
 
         var style = base.copy(
             colorHex = textColor,

@@ -3,6 +3,7 @@ package com.example.wallquote.automatch
 import android.graphics.Bitmap
 import com.example.wallquote.domain.automatch.BackgroundSample
 import com.example.wallquote.domain.automatch.Contrast
+import com.example.wallquote.domain.automatch.autoMatchKey
 import com.example.wallquote.domain.background.GradientGeometryCalculator
 import com.example.wallquote.domain.model.BackgroundSpec
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,7 @@ class DefaultBackgroundSampler @Inject constructor() : BackgroundSampler {
             when (background) {
                 is BackgroundSpec.Solid -> sampleSolid(background.colorHex)
                 is BackgroundSpec.Gradient -> sampleGradient(background)
-                is BackgroundSpec.Photo -> samplePhoto(photoBitmap)
+                is BackgroundSpec.Photo -> samplePhoto(photoBitmap, background.dimAmount)
             }
         }
 
@@ -46,13 +47,9 @@ class DefaultBackgroundSampler @Inject constructor() : BackgroundSampler {
         return sample
     }
 
-    private fun cacheKey(background: BackgroundSpec): String = when (background) {
-        is BackgroundSpec.Solid -> "solid:${background.colorHex}"
-        is BackgroundSpec.Gradient ->
-            "gradient:${background.startColorHex}:${background.endColorHex}:${background.angleDegrees}"
-        is BackgroundSpec.Photo ->
-            "photo:${background.assetId}:${background.dimAmount}:${background.blurRadiusDp}"
-    }
+    /** Reuses [autoMatchKey] so the sample cache and Auto Match staleness checks stay in sync
+     * (both must invalidate together when dim/blur/asset/colors change). */
+    private fun cacheKey(background: BackgroundSpec): String = background.autoMatchKey()
 
     private fun sampleSolid(colorHex: String): BackgroundSample =
         buildSample(listOf(parseHex(colorHex)))
@@ -82,20 +79,33 @@ class DefaultBackgroundSampler @Inject constructor() : BackgroundSampler {
         return buildSample(samples)
     }
 
-    private fun samplePhoto(bitmap: Bitmap?): BackgroundSample {
+    /**
+     * Samples the decoded (un-dimmed) preview bitmap and applies [dimAmount] to each sampled
+     * pixel (multiplying RGB by `1 - dim`) so the suggestion matches what will actually be
+     * rendered on top of the dimmed photo, not the raw source image.
+     */
+    private fun samplePhoto(bitmap: Bitmap?, dimAmount: Float): BackgroundSample {
         if (bitmap == null || bitmap.isRecycled) {
-            return buildSample(listOf(NEUTRAL_GRAY))
+            return buildSample(listOf(applyDim(NEUTRAL_GRAY, dimAmount)))
         }
         val small = Bitmap.createScaledBitmap(bitmap, PHOTO_GRID_SIZE, PHOTO_GRID_SIZE, true)
         val colors = ArrayList<Long>(PHOTO_GRID_SIZE * PHOTO_GRID_SIZE)
         for (y in 0 until PHOTO_GRID_SIZE) {
             for (x in 0 until PHOTO_GRID_SIZE) {
                 val pixel = small.getPixel(x, y)
-                colors += (pixel.toLong() and 0x00FFFFFFL) or 0xFF000000L
+                val argb = (pixel.toLong() and 0x00FFFFFFL) or 0xFF000000L
+                colors += applyDim(argb, dimAmount)
             }
         }
         if (small !== bitmap) small.recycle()
         return buildSample(colors)
+    }
+
+    private fun applyDim(argb: Long, dimAmount: Float): Long {
+        val factor = 1f - dimAmount.coerceIn(0f, 1f)
+        fun channel(shift: Int): Long =
+            (((argb shr shift) and 0xFF) * factor).toLong().coerceIn(0L, 255L)
+        return 0xFF000000L or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
     }
 
     private fun buildSample(colors: List<Long>): BackgroundSample {

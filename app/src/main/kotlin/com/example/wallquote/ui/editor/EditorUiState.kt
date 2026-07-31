@@ -68,11 +68,25 @@ data class EditorUiState(
     val customStyles: List<CustomTextStyle> = emptyList(),
     /** Sampling + suggestion in progress for the "Auto Match" flow. */
     val autoMatchLoading: Boolean = false,
-    /** Suggestion currently being previewed; textStyle already reflects it until confirmed/undone. */
+    /**
+     * Suggestion currently being previewed. [textStyle] itself is never mutated by a pending
+     * suggestion; use [previewTextStyle] for anything the user sees on screen.
+     */
     val autoMatchSuggestion: TextStyleSuggestion? = null,
-    /** Style to restore to if the user undoes the previewed suggestion. */
-    val autoMatchBaselineStyle: TextStyleConfig? = null,
+    /**
+     * Last measured size (px) of the preview area, reported by [EditorScreen]'s
+     * `EditorPreviewArea`. Not part of [toDraft] (purely a UI layout fact, not saved content);
+     * used by [com.example.wallquote.ui.editor.EditorViewModel.updateTransformRequested] to
+     * clamp slider- and gesture-driven transform edits identically (P4-013 follow-up). Zero
+     * until the preview area has been measured at least once.
+     */
+    val previewViewportWidthPx: Int = 0,
+    val previewViewportHeightPx: Int = 0,
 ) {
+    /** What the preview (and only the preview) should render: the suggestion if one is pending, else [textStyle]. */
+    val previewTextStyle: TextStyleConfig
+        get() = autoMatchSuggestion?.style ?: textStyle
+
     val canSave: Boolean
         get() = name.isNotBlank() && texts.any { it.text.isNotBlank() } && !isSaving &&
             photoEditorState !is PhotoEditorState.Importing

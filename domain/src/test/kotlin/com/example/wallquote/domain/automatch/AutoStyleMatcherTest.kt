@@ -63,6 +63,39 @@ class AutoStyleMatcherTest {
     }
 
     @Test
+    fun blackAboveThreshold_butActualDarkTextColorBelowThreshold_enablesBlock() {
+        // P4-006: contrastWithBlack (pure #000000) can clear TARGET_CONTRAST while the *actual*
+        // dark text color (#1A1A1A) the matcher applies still falls short of it, since #1A1A1A is
+        // not pure black. The matcher must use the real text color's contrast — not
+        // contrastWithBlack — to decide whether to enable a text block.
+        val averageLuminance = 0.2f
+        val contrastWithBlack = Contrast.contrastRatio(averageLuminance, 0f)
+        val contrastWithWhite = Contrast.contrastRatio(averageLuminance, 1f)
+        val actualDarkTextContrast =
+            Contrast.contrastRatio(averageLuminance, Contrast.relativeLuminance(0xFF1A1A1AL))
+
+        // Sanity-check the fixture actually reproduces the bug scenario.
+        assertTrue(contrastWithBlack >= 4.5f)
+        assertTrue(actualDarkTextContrast < 4.5f)
+        assertTrue(contrastWithWhite < contrastWithBlack) // ensures dark text is preferred
+
+        val sample = BackgroundSample(
+            averageColorArgb = 0xFF808080L,
+            dominantColorArgb = 0xFF808080L,
+            averageLuminance = averageLuminance,
+            contrastWithWhite = contrastWithWhite,
+            contrastWithBlack = contrastWithBlack,
+            visualComplexity = 0.1f,
+        )
+
+        val suggestion = AutoStyleMatcher.suggest(sample, TextStyleConfig())
+        assertEquals("#1A1A1A", suggestion.style.colorHex)
+        assertTrue(suggestion.style.blockColorHex != null)
+        assertTrue(suggestion.style.blockAlpha > 0f)
+        assertEquals(0f, suggestion.style.shadowAlpha, 0.0001f)
+    }
+
+    @Test
     fun doesNotMutateSizeFontWeightAlignOrSpacing() {
         val base = TextStyleConfig(
             textSizeSp = 40f,
