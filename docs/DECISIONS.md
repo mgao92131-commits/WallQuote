@@ -134,3 +134,21 @@ Phase 1 不展示。Phase 2 起展示「设为壁纸」：优先 `ACTION_CHANGE_
 - 阴影：`shadowRadiusDp`、`shadowDistanceDp`、`shadowAngleDegrees`（0°=右，顺时针增加）、`shadowColorHex`、`shadowAlpha`。
 - 不含竖排文字字段（P1 「竖排」需求本阶段未实现，见 REQUIREMENTS 遗留项）。
 - `TextStyleNormalizer` 负责越界裁剪、非有限值回退默认值、透明度归一化到 `[0,1]`；`AutoStyleMatcher` 只调整颜色/阴影/背景块相关字段，不触碰字号、字重、对齐、字距、行高。
+
+## D-024 自定义样式名称唯一性：`normalizedName` 列（2026-07-31，P4-014）
+
+- `custom_styles` 新增 `normalizedName: String` 列（写入时为 `name.trim().lowercase(Locale.ROOT)`），唯一索引建在 `normalizedName` 上；`name` 列本身改为非唯一，仅用于展示原始大小写。
+- 应用尚未发布，Room 仍是 **version 1**：直接修改 `CustomStyleEntity` + ksp 重新生成 `data/schemas/.../1.json`，不新增迁移（沿用 D-020 的 `fallbackToDestructiveMigration`）。
+- `CustomStyleDao.countByNormalizedName` 与 `CustomStyleRepositoryImpl.existsName` 均按 `normalizedName` 比较，替代此前不一致的 `lower(name)` SQL 表达式判断 + 大小写敏感索引的组合。
+- `CustomStyleDao.reorder(orderedIds)` 改为 Kotlin 接口的 `@Transaction` 默认方法（内部循环调用 `updateSortOrder`），保证批量重排是单一事务；`CustomStyleRepositoryImpl.reorder` 直接委托给它，不再自行循环。
+
+## D-025 `BackgroundImageLoader.load()` 诊断改为按调用传入（2026-07-31，P4-017）
+
+- `DefaultBackgroundImageLoader` 是 `@Singleton`（与共享 Bitmap 缓存/处理器绑定），但診断（`WallpaperDiagnostics`）是每个壁纸 Engine 实例私有的；此前用可变 `var diagnostics` 字段由 `WallQuoteWallpaperService.onCreate` 赋值，多个 Engine（或 Engine + `HomeViewModel` 缩略图加载）共享同一 Loader 时会互相覆盖。
+- 改为 `load()` 增加 `diagnostics: WallpaperDiagnostics? = null` 形参，由调用方（`WallpaperCoordinator` 持有自己的 `diagnostics`）逐次传入；不需要诊断的调用方（如 `HomeViewModel` 缩略图）使用默认 `null`。移除了 Loader 上的可变字段。
+
+## D-026 编辑器变换（Transform）统一裁剪路径（2026-07-31，P4-013 跟进）
+
+- `EditorViewModel.updateTransformRequested(rawTransform, provisionalTextHeightPx, density)` 是手势拖拽与「调整布局」滑块共用的唯一变换更新入口，内部调用 `QuoteBlockLayoutCalculator.clampTransform`。此前仅手势路径做旋转包围盒裁剪，滑块路径直接调用 `updateTransform`，只受 Slider 自身 `0..1` / `-180..180` 值域限制，旋转后的文字块仍可被拖出大半屏幕。
+- 视口尺寸通过 `EditorUiState.previewViewportWidthPx/HeightPx`（由 `EditorScreen` 的 `Modifier.onSizeChanged` 报告给 `EditorViewModel.setPreviewViewportSize`）传递，属于纯 UI 布局状态，不计入 `EditorDraft`/脏检查。
+- 视口尚未测量时（宽高为 0）回退为仅 `QuoteTransformNormalizer.normalize`，不做裁剪。
