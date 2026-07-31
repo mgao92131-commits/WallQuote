@@ -1,5 +1,6 @@
 package com.example.wallquote.ui.style
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -25,6 +28,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -44,13 +50,46 @@ fun CustomStyleEditorScreen(
     viewModel: CustomStyleEditorViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var showUnsaved by remember { mutableStateOf(false) }
+
+    BackHandler {
+        viewModel.requestClose()
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
                 CustomStyleEditorEvent.Finish -> onFinished()
+                CustomStyleEditorEvent.ShowUnsavedDialog -> showUnsaved = true
             }
         }
+    }
+
+    if (showUnsaved) {
+        AlertDialog(
+            onDismissRequest = { showUnsaved = false },
+            title = { Text("有未保存的更改") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("保存、放弃修改，或继续编辑？")
+                    TextButton(
+                        onClick = {
+                            showUnsaved = false
+                            viewModel.saveAndFinish()
+                        },
+                    ) { Text("保存") }
+                    TextButton(
+                        onClick = {
+                            showUnsaved = false
+                            viewModel.discardAndFinish()
+                        },
+                    ) { Text("放弃修改") }
+                    TextButton(onClick = { showUnsaved = false }) { Text("继续编辑") }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {},
+        )
     }
 
     state.errorMessage?.let { message ->
@@ -69,12 +108,12 @@ fun CustomStyleEditorScreen(
             TopAppBar(
                 title = { Text(if (styleId == null) "新建样式" else "编辑样式") },
                 navigationIcon = {
-                    IconButton(onClick = onFinished) {
+                    IconButton(onClick = { viewModel.requestClose() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
-                    TextButton(onClick = viewModel::save, enabled = state.canSave) {
+                    TextButton(onClick = viewModel::saveAndFinish, enabled = state.canSave) {
                         Text("保存")
                     }
                 },
@@ -115,14 +154,16 @@ fun CustomStyleEditorScreen(
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     singleLine = true,
                 )
-                Row(
+                // P4-015: this row of chips must scroll horizontally, not vertically (a Row lays
+                // its children out horizontally, so a vertical scroll modifier here was a no-op
+                // that could clip chips on narrow screens instead of making them reachable).
+                LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .padding(horizontal = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    StyleSection.entries.forEach { section ->
+                    items(StyleSection.entries, key = { it.name }) { section ->
                         FilterChip(
                             selected = state.selectedSection == section,
                             onClick = { viewModel.selectSection(section) },

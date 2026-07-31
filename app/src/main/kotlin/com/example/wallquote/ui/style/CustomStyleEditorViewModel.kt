@@ -18,6 +18,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** Comparable snapshot for dirty-state detection, mirroring [com.example.wallquote.domain.editor.EditorDraft]. */
+data class CustomStyleDraft(
+    val name: String,
+    val style: TextStyleConfig,
+)
+
 data class CustomStyleEditorUiState(
     val id: Long? = null,
     val name: String = "",
@@ -29,10 +35,13 @@ data class CustomStyleEditorUiState(
 ) {
     val canSave: Boolean
         get() = name.isNotBlank() && !isSaving && !isLoading
+
+    fun toDraft(): CustomStyleDraft = CustomStyleDraft(name = name.trim(), style = style)
 }
 
 sealed interface CustomStyleEditorEvent {
     data object Finish : CustomStyleEditorEvent
+    data object ShowUnsavedDialog : CustomStyleEditorEvent
 }
 
 @HiltViewModel
@@ -50,6 +59,15 @@ class CustomStyleEditorViewModel @Inject constructor(
     private val _events = MutableSharedFlow<CustomStyleEditorEvent>()
     val events: SharedFlow<CustomStyleEditorEvent> = _events.asSharedFlow()
 
+    /** Snapshot taken right after load (or at creation, for a new style) to detect unsaved edits. */
+    private var originalDraft: CustomStyleDraft? = null
+
+    val isDirty: Boolean
+        get() {
+            val baseline = originalDraft ?: return false
+            return _uiState.value.toDraft() != baseline
+        }
+
     init {
         val id = styleId
         if (id != null) {
@@ -66,8 +84,11 @@ class CustomStyleEditorViewModel @Inject constructor(
                             isLoading = false,
                         )
                     }
+                    originalDraft = _uiState.value.toDraft()
                 }
             }
+        } else {
+            originalDraft = _uiState.value.toDraft()
         }
     }
 
@@ -87,7 +108,8 @@ class CustomStyleEditorViewModel @Inject constructor(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    fun save() {
+    /** Saves and, on success, finishes the screen; on failure the draft/error stay so the user can retry. */
+    fun saveAndFinish() {
         viewModelScope.launch {
             val state = _uiState.value
             if (state.name.isBlank()) {
@@ -101,6 +123,7 @@ class CustomStyleEditorViewModel @Inject constructor(
                 )
             }.onSuccess {
                 _uiState.update { it.copy(isSaving = false) }
+                originalDraft = _uiState.value.toDraft()
                 _events.emit(CustomStyleEditorEvent.Finish)
             }.onFailure { error ->
                 _uiState.update {
@@ -111,5 +134,20 @@ class CustomStyleEditorViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /** Back press / nav-up: prompt to save if dirty, otherwise finish immediately. */
+    fun requestClose() {
+        viewModelScope.launch {
+            if (isDirty) {
+                _events.emit(CustomStyleEditorEvent.ShowUnsavedDialog)
+            } else {
+                _events.emit(CustomStyleEditorEvent.Finish)
+            }
+        }
+    }
+
+    fun discardAndFinish() {
+        viewModelScope.launch { _events.emit(CustomStyleEditorEvent.Finish) }
     }
 }
