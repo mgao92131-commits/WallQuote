@@ -18,6 +18,7 @@ navigationCompose = "2.9.0"
 serialization = "1.8.1"
 coil = "3.1.0"
 exifinterface = "1.4.1"
+datastorePreferences = "1.1.7"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -53,6 +54,7 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil = { module = "io.coil-kt.coil3:coil", version.ref = "coil" }
 androidx-exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastorePreferences" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

@@ -5,12 +5,11 @@ import androidx.room.Room
 import com.example.wallquote.data.background.FileBackgroundAssetStore
 import com.example.wallquote.data.local.AppDatabase
 import com.example.wallquote.data.local.CollectionDao
-import com.example.wallquote.data.local.CustomStyleDao
 import com.example.wallquote.data.repository.CollectionRepositoryImpl
-import com.example.wallquote.data.repository.CustomStyleRepositoryImpl
+import com.example.wallquote.data.repository.DataStorePreferencesRecentTextStyleRepository
 import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.repository.CollectionRepository
-import com.example.wallquote.domain.repository.CustomStyleRepository
+import com.example.wallquote.domain.repository.RecentTextStyleRepository
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -33,9 +32,6 @@ object DatabaseModule {
 
     @Provides
     fun provideCollectionDao(db: AppDatabase): CollectionDao = db.collectionDao()
-
-    @Provides
-    fun provideCustomStyleDao(db: AppDatabase): CustomStyleDao = db.customStyleDao()
 }
 
 @Module
@@ -48,9 +44,11 @@ abstract class RepositoryModule {
 
     @Binds
     @Singleton
-    abstract fun bindCustomStyleRepository(impl: CustomStyleRepositoryImpl): CustomStyleRepository
+    abstract fun bindBackgroundAssetStore(impl: FileBackgroundAssetStore): BackgroundAssetStore
 
     @Binds
     @Singleton
-    abstract fun bindBackgroundAssetStore(impl: FileBackgroundAssetStore): BackgroundAssetStore
+    abstract fun bindRecentTextStyleRepository(
+        impl: DataStorePreferencesRecentTextStyleRepository,
+    ): RecentTextStyleRepository
 }
