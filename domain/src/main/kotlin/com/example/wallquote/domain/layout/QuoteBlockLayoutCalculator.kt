@@ -70,7 +70,15 @@ object QuoteBlockLayoutCalculator {
     }
 
     /**
-     * Clamp transform so at least [MIN_VISIBLE_FRACTION] of the unrotated block stays on-screen.
+     * Clamp transform so at least [MIN_VISIBLE_FRACTION] of the block's rotated axis-aligned
+     * bounding box stays on-screen (P4-013). A rotated rectangle of width [blockW] and height
+     * [blockH] occupies a larger AABB footprint than the unrotated rectangle:
+     *
+     * ```
+     * rotatedW = blockW * |cos(theta)| + blockH * |sin(theta)|
+     * rotatedH = blockW * |sin(theta)| + blockH * |cos(theta)|
+     * ```
+     *
      * Oversized blocks remain centered.
      */
     fun clampTransform(
@@ -85,15 +93,20 @@ object QuoteBlockLayoutCalculator {
         val layout = calculate(surfaceWidth, surfaceHeight, transform, measuredText, style, density)
         val blockW = layout.blockRightPx - layout.blockLeftPx
         val blockH = layout.blockBottomPx - layout.blockTopPx
-        if (blockW >= surfaceWidth || blockH >= surfaceHeight) {
+        val radians = Math.toRadians(transform.rotationDegrees.toDouble())
+        val absCos = kotlin.math.abs(cos(radians)).toFloat()
+        val absSin = kotlin.math.abs(sin(radians)).toFloat()
+        val rotatedW = blockW * absCos + blockH * absSin
+        val rotatedH = blockW * absSin + blockH * absCos
+        if (rotatedW >= surfaceWidth || rotatedH >= surfaceHeight) {
             return transform.copy(centerXFraction = 0.5f, centerYFraction = 0.5f)
         }
-        val minVisibleW = blockW * MIN_VISIBLE_FRACTION
-        val minVisibleH = blockH * MIN_VISIBLE_FRACTION
-        val minCenterX = (minVisibleW - blockW / 2f) / surfaceWidth
-        val maxCenterX = (surfaceWidth - (minVisibleW - blockW / 2f)) / surfaceWidth
-        val minCenterY = (minVisibleH - blockH / 2f) / surfaceHeight
-        val maxCenterY = (surfaceHeight - (minVisibleH - blockH / 2f)) / surfaceHeight
+        val minVisibleW = rotatedW * MIN_VISIBLE_FRACTION
+        val minVisibleH = rotatedH * MIN_VISIBLE_FRACTION
+        val minCenterX = (minVisibleW - rotatedW / 2f) / surfaceWidth
+        val maxCenterX = (surfaceWidth - (minVisibleW - rotatedW / 2f)) / surfaceWidth
+        val minCenterY = (minVisibleH - rotatedH / 2f) / surfaceHeight
+        val maxCenterY = (surfaceHeight - (minVisibleH - rotatedH / 2f)) / surfaceHeight
         return transform.copy(
             centerXFraction = transform.centerXFraction.coerceIn(
                 min(minCenterX, maxCenterX),

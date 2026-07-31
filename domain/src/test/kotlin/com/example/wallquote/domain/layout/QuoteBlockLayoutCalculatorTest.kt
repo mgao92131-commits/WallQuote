@@ -114,4 +114,60 @@ class QuoteBlockLayoutCalculatorTest {
         assertEquals(0.5f, clamped.centerYFraction, 0.001f)
         assertEquals(12f, clamped.rotationDegrees, 0.001f)
     }
+
+    @Test
+    fun clampTransform_at0Degrees_usesUnrotatedFootprint() {
+        // blockW = 200, blockH = 50 (no padding/border in default style).
+        val clamped = QuoteBlockLayoutCalculator.clampTransform(
+            surfaceWidth = 1000,
+            surfaceHeight = 1000,
+            transform = QuoteTransform(0.995f, 0.995f, 0f),
+            measuredText = MeasuredQuoteText(widthPx = 200f, heightPx = 50f),
+            style = TextStyleConfig(),
+            density = 1f,
+        )
+        assertEquals(0.96f, clamped.centerXFraction, 0.001f)
+        assertEquals(0.99f, clamped.centerYFraction, 0.001f)
+    }
+
+    @Test
+    fun clampTransform_at90Degrees_swapsFootprintAxes() {
+        // Same block as the 0deg case, but rotated 90deg: width/height footprint swap.
+        val clamped = QuoteBlockLayoutCalculator.clampTransform(
+            surfaceWidth = 1000,
+            surfaceHeight = 1000,
+            transform = QuoteTransform(0.995f, 0.995f, 90f),
+            measuredText = MeasuredQuoteText(widthPx = 200f, heightPx = 50f),
+            style = TextStyleConfig(),
+            density = 1f,
+        )
+        assertEquals(0.99f, clamped.centerXFraction, 0.001f)
+        assertEquals(0.96f, clamped.centerYFraction, 0.001f)
+    }
+
+    @Test
+    fun clampTransform_at45Degrees_expandsBoundingBoxBeyondEitherAxis() {
+        // A square block (140x140) fits unrotated in a 150x150 surface, but its 45deg rotated
+        // AABB (140 * sqrt(2) ~= 198) does not, so it must fall back to recentering.
+        val unrotated = QuoteBlockLayoutCalculator.clampTransform(
+            surfaceWidth = 150,
+            surfaceHeight = 150,
+            transform = QuoteTransform(0.9f, 0.9f, 0f),
+            measuredText = MeasuredQuoteText(widthPx = 140f, heightPx = 140f),
+            style = TextStyleConfig(),
+            density = 1f,
+        )
+        assertTrue(unrotated.centerXFraction > 0.5f)
+
+        val rotated45 = QuoteBlockLayoutCalculator.clampTransform(
+            surfaceWidth = 150,
+            surfaceHeight = 150,
+            transform = QuoteTransform(0.9f, 0.9f, 45f),
+            measuredText = MeasuredQuoteText(widthPx = 140f, heightPx = 140f),
+            style = TextStyleConfig(),
+            density = 1f,
+        )
+        assertEquals(0.5f, rotated45.centerXFraction, 0.001f)
+        assertEquals(0.5f, rotated45.centerYFraction, 0.001f)
+    }
 }
