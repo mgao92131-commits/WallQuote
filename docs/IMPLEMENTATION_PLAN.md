@@ -9,6 +9,7 @@
 | **Phase 3 Complete** | 背景系统收口：Schema 重置、可重试保存、Blur 内存、共享处理 |
 | **Phase 4 Feature Complete** | 样式系统、自定义样式、编辑交互、Auto Match、壁纸淡入淡出 |
 | **Phase 4.1 Acceptance Fixes Complete** | P4-001..P4-018 全部完成；P4-019 本地回归已补齐（含 `EditorViewModelAutoMatchTest`）；GitHub Actions 绿勾与 API 26/31/34 手工验证仍为 RC1 前置条件 |
+| **Phase 4.2 Style Simplification Complete** | 移除独立自定义样式库（列表页/编辑器/CRUD/Room 表），改为 DataStore 记忆「最近样式」；收藏集编辑器内联样式编辑保留（见 D-027） |
 
 ## 阶段总览
 
@@ -102,7 +103,23 @@ Phase 4.1 不引入新功能，只修复 Phase 4 验收中发现的功能错误�
 | P4-016 | 全天时间状态下起止手柄重叠，距离相等时规则固定选中 Start | ✅ 完成（`CircularTimeGeometry.resolveDragHandle` 按 `lastSelected` 交替选中） |
 | P4-017 | Singleton 图片 Loader 的可变诊断字段被多个 Wallpaper Engine 实例覆盖 | ✅ 完成（`load()` 新增 `diagnostics` 形参，见 D-025） |
 | P4-018 | 编辑器保留两套重复样式控件实现（`EditorScreen` 自有 vs `StyleEditingControls.kt`） | ✅ 完成（`EditorScreen.StyleTabContent` 改用 `StyleSection`/`StyleSectionContent`，删除重复实现） |
-| P4-019 | Phase 4 测试覆盖不足：Canvas/DAO/ViewModel/未保存退出等缺少专项测试 | ✅ 本地完成：含 `EditorViewModelAutoMatchTest`（预览/确认/撤销/背景竞态/手动编辑失效）、`CustomStyleEditorViewModelTest`、`CustomStyleDaoTest`、`BackgroundSamplerTest`、`WallpaperTransitionDriverTest`、`QuoteGestureTransformerTest`、`TextStyleValidatorTest` 等；Compose Golden / connectedAndroidTest / CI 绿勾仍待 RC1 实机与远程验收 |
+| P4-019 | Phase 4 测试覆盖不足：Canvas/DAO/ViewModel/未保存退出等缺少专项测试 | ✅ 本地完成：含 `EditorViewModelAutoMatchTest`（预览/确认/撤销/背景竞态/手动编辑失效）、~~`CustomStyleEditorViewModelTest`、`CustomStyleDaoTest`~~（Phase 4.2 随自定义样式库一起删除，替换为 `RecentTextStyleRepositoryTest`/`EditorViewModelRecentStyleTest`）、`BackgroundSamplerTest`、`WallpaperTransitionDriverTest`、`QuoteGestureTransformerTest`、`TextStyleValidatorTest` 等；Compose Golden / connectedAndroidTest / CI 绿勾仍待 RC1 实机与远程验收 |
+
+---
+
+## Phase 4.2 任务（简化：移除自定义样式库）
+
+不新增产品功能，移除低价值的独立自定义样式库，改为 DataStore 记忆「最近样式」。详见 `DECISIONS.md` D-027。
+
+- [x] 删除 `ui/style/CustomStylesListScreen.kt`、`CustomStylesListViewModel.kt`、`CustomStyleEditorScreen.kt`、`CustomStyleEditorViewModel.kt`（保留 `StyleEditingControls.kt`，收藏集编辑器仍需要）
+- [x] 删除 `domain.model.CustomTextStyle`、`domain.repository.CustomStyleRepository`、`domain.usecase.CustomStyleUseCases`（全部 6 个用例）
+- [x] 删除 `data.local.CustomStyleDao`、`CustomStyleEntity`、`data.repository.CustomStyleRepositoryImpl`；`AppDatabase` 只剩 `CollectionEntity`/`CollectionTextLineEntity`；ksp 重新生成 `1.json`（不含 `custom_styles`）
+- [x] `DataModule`（data）/`DomainModule`（app）移除全部 CustomStyle 相关 provider/binding
+- [x] `WallQuoteNavHost` 移除 `CUSTOM_STYLES`/`CUSTOM_STYLE_EDITOR` 路由；`HomeScreen` 移除入口图标；`EditorScreen` 移除「另存为」「管理」「应用自定义样式」UI，保留预设卡片 + Auto Match + `StyleSectionContent`
+- [x] 新增 `domain.repository.RecentTextStyleRepository` + `data.repository.DataStorePreferencesRecentTextStyleRepository`（DataStore Preferences，`libs.versions.toml` 新增 `androidx-datastore-preferences`）
+- [x] `EditorViewModel`：新建收藏集继承 `recent.get() ?: TextStyleConfig()`；既有收藏集样式不被覆盖；保存成功后 best-effort 更新最近样式；放弃/丢弃不更新；新增「使用最近样式」「恢复默认样式」两个 Style Tab chip
+- [x] 删除 `CustomStyleDaoTest`、`CustomStyleEditorViewModelTest`；更新 `EditorViewModelAutoMatchTest`（注入假 `RecentTextStyleRepository` 而非 `CustomStyleRepository`）；新增 `RecentTextStyleRepositoryTest`（DataStore 往返、损坏 JSON 返回 `null`）与 `EditorViewModelRecentStyleTest`（新建继承/既有不覆盖/保存成功更新/保存失败不更新/放弃不更新）
+- [x] `DECISIONS.md` D-027（取代 D-021/D-024）；`REQUIREMENTS.md`/本文件同步标注旧条目已作废
 
 ---
 

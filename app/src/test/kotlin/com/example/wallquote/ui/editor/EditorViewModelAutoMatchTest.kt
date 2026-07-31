@@ -10,12 +10,10 @@ import com.example.wallquote.domain.background.BackgroundAssetStore
 import com.example.wallquote.domain.background.StagedBackgroundAsset
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CollectionConfig
-import com.example.wallquote.domain.model.CustomTextStyle
+import com.example.wallquote.domain.model.TextStyleConfig
 import com.example.wallquote.domain.repository.CollectionRepository
-import com.example.wallquote.domain.repository.CustomStyleRepository
-import com.example.wallquote.domain.usecase.CreateStyleFromCollectionUseCase
+import com.example.wallquote.domain.repository.RecentTextStyleRepository
 import com.example.wallquote.domain.usecase.GetCollectionUseCase
-import com.example.wallquote.domain.usecase.ObserveCustomStylesUseCase
 import com.example.wallquote.domain.usecase.SaveCollectionWithBackgroundUseCase
 import com.example.wallquote.wallpaper.background.BackgroundImageProcessor
 import com.example.wallquote.wallpaper.background.ProcessedBackgroundImage
@@ -23,7 +21,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -105,6 +102,17 @@ class EditorViewModelAutoMatchTest {
         ): ProcessedBackgroundImage = error("unused")
     }
 
+    private class FakeRecentTextStyleRepository : RecentTextStyleRepository {
+        var stored: TextStyleConfig? = null
+        override suspend fun get(): TextStyleConfig? = stored
+        override suspend fun save(style: TextStyleConfig) {
+            stored = style
+        }
+        override suspend fun clear() {
+            stored = null
+        }
+    }
+
     private fun createViewModel(sampler: ControllableSampler): EditorViewModel {
         val collectionRepo = object : CollectionRepository {
             override fun observeOrderedCollections(): Flow<List<CollectionConfig>> = flowOf(emptyList())
@@ -112,21 +120,12 @@ class EditorViewModelAutoMatchTest {
             override suspend fun upsertCollection(config: CollectionConfig): Long = 1L
             override suspend fun deleteCollection(id: Long) = Unit
         }
-        val customRepo = object : CustomStyleRepository {
-            override fun observeOrdered(): Flow<List<CustomTextStyle>> = MutableStateFlow(emptyList())
-            override suspend fun getById(id: Long): CustomTextStyle? = null
-            override suspend fun save(style: CustomTextStyle): Long = 1L
-            override suspend fun delete(id: Long) = Unit
-            override suspend fun reorder(orderedIds: List<Long>) = Unit
-            override suspend fun existsName(name: String, excludingId: Long?): Boolean = false
-        }
         val assetStore = FakeAssetStore()
         return EditorViewModel(
             savedStateHandle = SavedStateHandle(mapOf("collectionId" to -1L)),
             getCollectionUseCase = GetCollectionUseCase(collectionRepo),
             saveCollectionWithBackgroundUseCase = SaveCollectionWithBackgroundUseCase(collectionRepo, assetStore),
-            observeCustomStylesUseCase = ObserveCustomStylesUseCase(customRepo),
-            createStyleFromCollectionUseCase = CreateStyleFromCollectionUseCase(customRepo),
+            recentTextStyleRepository = FakeRecentTextStyleRepository(),
             assetStore = assetStore,
             imageProcessor = FakeProcessor(),
             backgroundSampler = sampler,

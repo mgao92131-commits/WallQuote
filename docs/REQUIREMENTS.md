@@ -6,7 +6,7 @@
 
 ### 产品与平台
 
-- Android 动态壁纸应用「壁上言」（WallQuote），包名 `com.example.wallquote`。
+- Android 动态壁纸应用「壁上言」（WallQuote），applicationId `dev.gaoxxx.wallquote`（源码 namespace 暂仍为 `com.example.wallquote`）。
 - minSdk 26，targetSdk 34，**compileSdk 36**（依赖库要求；运行时目标仍为 34），versionCode 1，versionName 1.0。
 
 ### 架构与质量
@@ -48,8 +48,8 @@
 - ~~渐变背景（`BackgroundSpec.Gradient`）。~~ **Phase 3 已实现**
 - ~~自定义图片背景（`BackgroundSpec.Photo`）、Coil 加载、dim/blur。~~ **Phase 3 已实现**（私有 assetId，非外部 URI）
 - 预设背景与默认名言首次启动种子数据。
-- ~~预设文字样式网格与用户自定义样式 CRUD（`custom_styles` 表 UI）。~~ **Phase 4 已实现**
-- ~~自定义样式全参数编辑器（边框、阴影、文字背景块）。~~ **Phase 4 已实现**（竖排未覆盖，见下）
+- ~~预设文字样式网格与用户自定义样式 CRUD（`custom_styles` 表 UI）。~~ **Phase 4 已实现，2026-07-31 已移除**（见 `DECISIONS.md` D-027）：独立样式库 CRUD 增加维护成本但无对应产品价值；改为收藏集自身持久化样式 + DataStore 记忆「最近样式」，新建收藏集默认继承。
+- ~~自定义样式全参数编辑器（边框、阴影、文字背景块）。~~ **Phase 4 已实现**（竖排未覆盖，见下）；编辑参数的 UI（`StyleEditingControls`）保留在收藏集编辑器内，独立编辑器页面已随 D-027 移除。
 - 编辑器内拖动/旋转手势变换（归一化 `QuoteTransform`）。
 - ~~环形时间选择器（30 分钟步长）。~~ **Phase 4 已实现**（`CircularTimePicker`）
 - ~~主页卡片时间轴可视化、SwipeToDismiss。~~ **Phase 4 已实现**
@@ -80,7 +80,7 @@
 | OQ-1 | 收藏集 `name` 在 ER 图中有字段，但 `CollectionConfig` 示例无 `name` | 采用 ER：`collections.name` 必填，Domain 模型含 `name` |
 | OQ-2 | 新收藏集无 `collectionId` 时返回是否弹保存对话框 | 第一阶段：显式保存按钮 + 返回时若有未保存更改则确认 |
 | OQ-3 | 默认背景「暗夜紫 `#2E3440`」与编辑器初始状态 | 新收藏集默认 Solid `#2E3440` |
-| OQ-4 | `custom_styles` 表是否在第一阶段建表但不提供 UI | 是：Schema v1 含表，UI/CRUD 延至 P1 |
+| OQ-4 | `custom_styles` 表是否在第一阶段建表但不提供 UI | 是：Schema v1 含表，UI/CRUD 延至 P1（**2026-07-31 起已作废**：`custom_styles` 表与其 UI/CRUD 已整体移除，见 D-027，改用 DataStore 记忆「最近样式」） |
 | OQ-5 | 渐变/图片在 Schema 中如何存 | `backgroundType` + `backgroundData` JSON，与 sealed `BackgroundSpec` 一致；阶段一只读写 Solid |
 | OQ-6 | 主页「设为壁纸」是否在阶段一 | 否：无完整壁纸服务时不提供无效按钮 |
 | OQ-7 | 时间编辑 UI 无环形选择器时的交互 | 阶段一：开始/结束时间用 Material 时间输入或滑块（分钟精度），仍持久化 `startMinuteOfDay`/`endMinuteOfDay` |

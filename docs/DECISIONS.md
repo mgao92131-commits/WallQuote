@@ -11,7 +11,7 @@
 
 ## D-002 数据库 version 1 即最终结构（2026-07-30）
 
-不实现历史 v1→v7 迁移。单版本 Schema 包含 `collections`、`collection_text_lines`、`custom_styles`。`textStyleData` 与 `backgroundData` 使用 kotlinx.serialization JSON。
+不实现历史 v1→v7 迁移。单版本 Schema 包含 `collections`、`collection_text_lines`。`textStyleData` 与 `backgroundData` 使用 kotlinx.serialization JSON。（`custom_styles` 表随自定义样式库一起于 2026-07-31 删除，见 D-027；「最近样式」改用 DataStore Preferences 而非 Room 表。）
 
 ## D-003 收藏集名称（2026-07-30）
 
@@ -103,12 +103,13 @@ Phase 1 不展示。Phase 2 起展示「设为壁纸」：优先 `ACTION_CHANGE_
 - 正式 `assetId` 格式 `bg_[0-9a-f]{32}`；staging `draft_[uuid]`；解析时校验 canonical path。
 - 编辑器与壁纸共用 `BackgroundImageProcessor`；共享 LRU；`onTrimMemory` 真正 trim/evict。
 
-## D-021 自定义样式：拷贝值而非外键（2026-07-31）
+## D-021 自定义样式：拷贝值而非外键（2026-07-31）— **已废弃，见 D-027**
 
-- `custom_styles` 表与 `CustomTextStyle` 仅作为**样式模板库**：`CustomStylesListScreen` / `CustomStyleEditorScreen` 增删改查独立于收藏集。
-- 收藏集应用某个自定义样式时，**拷贝** `TextStyleConfig` 值写入 `collections.textStyleData`；不存储 `customStyleId` 外键。之后编辑收藏集样式或删除/修改该自定义样式**互不影响**（`CustomStylesListScreen` 删除确认文案明确提示「不影响已应用的收藏集」）。
-- `CreateStyleFromCollectionUseCase` 反向从收藏集当前样式创建新的自定义样式模板，同样是值拷贝。
-- 校验与归一化统一在 `SaveCustomStyleUseCase` 内完成：去空格后名称非空、名称去重（按需排除自身 id）、`TextStyleNormalizer.validate` + `normalize`。
+- ~~`custom_styles` 表与 `CustomTextStyle` 仅作为**样式模板库**：`CustomStylesListScreen` / `CustomStyleEditorScreen` 增删改查独立于收藏集。~~
+- ~~收藏集应用某个自定义样式时，**拷贝** `TextStyleConfig` 值写入 `collections.textStyleData`；不存储 `customStyleId` 外键。之后编辑收藏集样式或删除/修改该自定义样式**互不影响**（`CustomStylesListScreen` 删除确认文案明确提示「不影响已应用的收藏集」）。~~
+- ~~`CreateStyleFromCollectionUseCase` 反向从收藏集当前样式创建新的自定义样式模板，同样是值拷贝。~~
+- ~~校验与归一化统一在 `SaveCustomStyleUseCase` 内完成：去空格后名称非空、名称去重（按需排除自身 id）、`TextStyleNormalizer.validate` + `normalize`。~~
+- 独立的自定义样式库（列表页 + 编辑器 + CRUD）已整体移除：详见 D-027。
 
 ## D-022 壁纸推进淡入淡出（288ms）规则（2026-07-31）
 
@@ -135,12 +136,13 @@ Phase 1 不展示。Phase 2 起展示「设为壁纸」：优先 `ACTION_CHANGE_
 - 不含竖排文字字段（P1 「竖排」需求本阶段未实现，见 REQUIREMENTS 遗留项）。
 - `TextStyleNormalizer` 负责越界裁剪、非有限值回退默认值、透明度归一化到 `[0,1]`；`AutoStyleMatcher` 只调整颜色/阴影/背景块相关字段，不触碰字号、字重、对齐、字距、行高。
 
-## D-024 自定义样式名称唯一性：`normalizedName` 列（2026-07-31，P4-014）
+## D-024 自定义样式名称唯一性：`normalizedName` 列（2026-07-31，P4-014）— **已废弃，见 D-027**
 
-- `custom_styles` 新增 `normalizedName: String` 列（写入时为 `name.trim().lowercase(Locale.ROOT)`），唯一索引建在 `normalizedName` 上；`name` 列本身改为非唯一，仅用于展示原始大小写。
-- 应用尚未发布，Room 仍是 **version 1**：直接修改 `CustomStyleEntity` + ksp 重新生成 `data/schemas/.../1.json`，不新增迁移（沿用 D-020 的 `fallbackToDestructiveMigration`）。
-- `CustomStyleDao.countByNormalizedName` 与 `CustomStyleRepositoryImpl.existsName` 均按 `normalizedName` 比较，替代此前不一致的 `lower(name)` SQL 表达式判断 + 大小写敏感索引的组合。
-- `CustomStyleDao.reorder(orderedIds)` 改为 Kotlin 接口的 `@Transaction` 默认方法（内部循环调用 `updateSortOrder`），保证批量重排是单一事务；`CustomStyleRepositoryImpl.reorder` 直接委托给它，不再自行循环。
+- ~~`custom_styles` 新增 `normalizedName: String` 列（写入时为 `name.trim().lowercase(Locale.ROOT)`），唯一索引建在 `normalizedName` 上；`name` 列本身改为非唯一，仅用于展示原始大小写。~~
+- ~~应用尚未发布，Room 仍是 **version 1**：直接修改 `CustomStyleEntity` + ksp 重新生成 `data/schemas/.../1.json`，不新增迁移（沿用 D-020 的 `fallbackToDestructiveMigration`）。~~
+- ~~`CustomStyleDao.countByNormalizedName` 与 `CustomStyleRepositoryImpl.existsName` 均按 `normalizedName` 比较，替代此前不一致的 `lower(name)` SQL 表达式判断 + 大小写敏感索引的组合。~~
+- ~~`CustomStyleDao.reorder(orderedIds)` 改为 Kotlin 接口的 `@Transaction` 默认方法（内部循环调用 `updateSortOrder`），保证批量重排是单一事务；`CustomStyleRepositoryImpl.reorder` 直接委托给它，不再自行循环。~~
+- `custom_styles` 表已随整个自定义样式库一起删除：详见 D-027。
 
 ## D-025 `BackgroundImageLoader.load()` 诊断改为按调用传入（2026-07-31，P4-017）
 
@@ -152,3 +154,17 @@ Phase 1 不展示。Phase 2 起展示「设为壁纸」：优先 `ACTION_CHANGE_
 - `EditorViewModel.updateTransformRequested(rawTransform, provisionalTextHeightPx, density)` 是手势拖拽与「调整布局」滑块共用的唯一变换更新入口，内部调用 `QuoteBlockLayoutCalculator.clampTransform`。此前仅手势路径做旋转包围盒裁剪，滑块路径直接调用 `updateTransform`，只受 Slider 自身 `0..1` / `-180..180` 值域限制，旋转后的文字块仍可被拖出大半屏幕。
 - 视口尺寸通过 `EditorUiState.previewViewportWidthPx/HeightPx`（由 `EditorScreen` 的 `Modifier.onSizeChanged` 报告给 `EditorViewModel.setPreviewViewportSize`）传递，属于纯 UI 布局状态，不计入 `EditorDraft`/脏检查。
 - 视口尚未测量时（宽高为 0）回退为仅 `QuoteTransformNormalizer.normalize`，不做裁剪。
+
+## D-027 移除自定义样式库，改为 DataStore 记忆「最近样式」（2026-07-31，取代 D-021 / D-024）
+
+- **动机**：独立的自定义样式列表/编辑器页（`CustomStylesListScreen`、`CustomStyleEditorScreen` 及其 ViewModel）与其 CRUD 是一套与收藏集编辑器平行的样式管理体系，但用户已经可以在收藏集编辑器内直接编辑样式并实时预览；独立样式库只增加维护成本（DAO、Repository、UseCases、导航路由、两块 UI、专项测试），没有对应的产品价值，故整体删除。
+- **删除范围**：`ui/style/CustomStylesListScreen.kt`、`CustomStylesListViewModel.kt`、`CustomStyleEditorScreen.kt`、`CustomStyleEditorViewModel.kt`；`domain/model/CustomTextStyle.kt`、`domain/repository/CustomStyleRepository.kt`、`domain/usecase/CustomStyleUseCases.kt`（`ObserveCustomStylesUseCase`/`GetCustomStyleUseCase`/`SaveCustomStyleUseCase`/`DeleteCustomStyleUseCase`/`ReorderCustomStylesUseCase`/`CreateStyleFromCollectionUseCase`）；`data/local/CustomStyleDao.kt`、`CustomStyleEntity`（`Entities.kt`）、`CustomStyleRepositoryImpl.kt`；对应测试 `CustomStyleDaoTest`、`CustomStyleEditorViewModelTest`；`WallQuoteNavHost` 的 `CUSTOM_STYLES` / `CUSTOM_STYLE_EDITOR` 路由；`HomeScreen`/`EditorScreen` 的入口按钮与「另存为」「管理」「应用自定义样式」UI。`StyleEditingControls.kt`（Text/Block/Border/Shadow 分区滑块，收藏集编辑器与已删除的自定义样式编辑器共用）保留，因为收藏集编辑器仍需要它。
+- **Room**：`AppDatabase` 的 `entities` 只剩 `CollectionEntity` + `CollectionTextLineEntity`，移除 `customStyleDao()`；应用尚未发布，Schema 仍是 **version 1**，直接改 `@Database` 注解 + ksp 重新生成 `data/schemas/.../1.json`（不再含 `custom_styles` 表），沿用 D-020 的 `fallbackToDestructiveMigration`。
+- **替代方案 —「最近使用的文字样式」**：新增 `domain.repository.RecentTextStyleRepository`（`get(): TextStyleConfig?` / `save(style)` / `clear()`），由 `data.repository.DataStorePreferencesRecentTextStyleRepository` 实现，用 Jetpack DataStore Preferences（`androidx.datastore:datastore-preferences`）持久化单个 `recent_text_style_json` 字符串键，复用既有 `JsonMappers`/`kotlinx.serialization`（`TextStyleSanitizer` + `TextStyleConfig` 的 `@Serializable`）编解码，格式与 `collections.textStyleData` 一致。JSON 损坏时 `get()` 返回 `null` 而非静默回退默认值。
+- **收藏集行为**：
+  - 新建收藏集：初始样式取 `recent.get() ?: TextStyleConfig()`（`EditorViewModel.buildNewEditorState`），即继承最近一次成功保存的样式；没有历史记录则用内置默认值。
+  - 编辑既有收藏集：始终使用该收藏集自身持久化的 `textStyle`，**永不**被「最近样式」覆盖（`loadExisting` 路径不读取 `RecentTextStyleRepository`）。
+  - 保存成功后：`saveAndFinish()` 用 `runCatching { recentTextStyleRepository.save(config.textStyle) }` 更新「最近样式」；DataStore 写入失败不影响已经提交成功的收藏集保存流程（best-effort，失败静默吞掉）。
+  - 用户主动放弃（`discardAndFinish`）或返回时选择放弃修改，都不调用 `save`，「最近样式」保持不变。
+- **UI**：样式 Tab 保留内置预设网格（`BuiltInTextStylePresets`，视觉卡片）与 Auto Match；新增两个 `FilterChip`：「使用最近样式」（`EditorViewModel.applyRecentStyle`，读取当前 `RecentTextStyleRepository.get()` 并整体应用到当前编辑草稿）与「恢复默认样式」（`EditorViewModel.applyDefaultStyle`，应用 `TextStyleConfig()`）。两者都只影响当前编辑草稿的 `textStyle`，不会立即写回 DataStore（写回仍只发生在保存成功时）。
+- **依赖**：`gradle/libs.versions.toml` 新增 `datastorePreferences = "1.1.7"` 与 `androidx-datastore-preferences` 库坐标；`data/build.gradle.kts` 增加 `implementation(libs.androidx.datastore.preferences)`。
