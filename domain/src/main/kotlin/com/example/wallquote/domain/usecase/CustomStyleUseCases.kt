@@ -4,6 +4,7 @@ import com.example.wallquote.domain.model.CustomTextStyle
 import com.example.wallquote.domain.model.TextStyleConfig
 import com.example.wallquote.domain.repository.CustomStyleRepository
 import com.example.wallquote.domain.style.TextStyleNormalizer
+import com.example.wallquote.domain.style.TextStyleValidator
 
 class ObserveCustomStylesUseCase(private val repository: CustomStyleRepository) {
     operator fun invoke() = repository.observeOrdered()
@@ -20,7 +21,7 @@ class SaveCustomStyleUseCase(private val repository: CustomStyleRepository) {
         if (repository.existsName(name, excludingId = style.id.takeIf { it != 0L })) {
             throw IllegalArgumentException("样式名称已存在")
         }
-        TextStyleNormalizer.validate(style.style)?.let { throw IllegalArgumentException(it) }
+        TextStyleValidator.validate(style.style)?.let { throw IllegalArgumentException(it) }
         return repository.save(
             style.copy(
                 name = name,

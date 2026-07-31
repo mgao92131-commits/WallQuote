@@ -3,7 +3,7 @@ package com.example.wallquote.data.local
 import com.example.wallquote.domain.background.BackgroundValidation
 import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.TextStyleConfig
-import com.example.wallquote.domain.style.TextStyleNormalizer
+import com.example.wallquote.domain.style.TextStyleSanitizer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -53,9 +53,9 @@ private fun fallbackBackground(type: String): BackgroundSpec =
     }
 
 fun TextStyleConfig.toJson(): String =
-    JsonConfig.json.encodeToString(TextStyleNormalizer.normalize(this))
+    JsonConfig.json.encodeToString(TextStyleSanitizer.sanitize(this))
 
 fun parseTextStyle(data: String): TextStyleConfig =
     runCatching {
-        TextStyleNormalizer.normalize(JsonConfig.json.decodeFromString<TextStyleConfig>(data))
+        TextStyleSanitizer.sanitize(JsonConfig.json.decodeFromString<TextStyleConfig>(data))
     }.getOrDefault(TextStyleConfig())

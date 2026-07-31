@@ -55,20 +55,16 @@ object TextStyleNormalizer {
                 .coerceIn(TextStyleLimits.SHADOW_ALPHA_MIN, TextStyleLimits.SHADOW_ALPHA_MAX),
         )
 
-    fun validate(style: TextStyleConfig): String? {
-        val normalized = normalize(style)
-        if (!BackgroundValidation.isValidColorHex(normalized.colorHex)) return "文字颜色无效"
-        if (normalized.blockColorHex != null && !BackgroundValidation.isValidColorHex(normalized.blockColorHex)) {
-            return "文字背景颜色无效"
-        }
-        if (normalized.blockBorderColorHex != null &&
-            !BackgroundValidation.isValidColorHex(normalized.blockBorderColorHex)
-        ) {
-            return "边框颜色无效"
-        }
-        if (!BackgroundValidation.isValidColorHex(normalized.shadowColorHex)) return "阴影颜色无效"
-        return null
-    }
+    /**
+     * @deprecated Validates against the *normalized* style, which silently repairs invalid
+     * colors and therefore can never report a color error (see P4-007). Prefer
+     * [TextStyleValidator.validate] on the raw, pre-normalize style for user-facing validation.
+     */
+    @Deprecated(
+        message = "Normalizing before validating hides invalid input; use TextStyleValidator instead.",
+        replaceWith = ReplaceWith("TextStyleValidator.validate(style)", "com.example.wallquote.domain.style.TextStyleValidator"),
+    )
+    fun validate(style: TextStyleConfig): String? = TextStyleValidator.validate(style)
 
     fun hasVisibleBlock(style: TextStyleConfig): Boolean {
         val n = normalize(style)

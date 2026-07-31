@@ -77,10 +77,11 @@ class TextStyleNormalizerTest {
     }
 
     @Test
-    fun validate_repairsInvalidColorsRatherThanFailing() {
-        // Required colors fall back to a valid default during normalize(), so validate()
-        // never surfaces an error for them; this documents current normalize-then-validate behavior.
-        assertNull(TextStyleNormalizer.validate(TextStyleConfig(colorHex = "zzzzzz")))
+    fun validate_invalidColorReturnsError() {
+        // P4-007: validate() must delegate to TextStyleValidator on the RAW style, not normalize
+        // first — normalizing before validating would silently repair the bad color into a valid
+        // default and never surface the error.
+        assertEquals("文字颜色无效", TextStyleNormalizer.validate(TextStyleConfig(colorHex = "zzzzzz")))
     }
 
     @Test
