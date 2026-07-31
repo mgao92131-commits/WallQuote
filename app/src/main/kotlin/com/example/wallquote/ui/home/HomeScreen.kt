@@ -4,17 +4,20 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Wallpaper
@@ -61,7 +64,7 @@ fun HomeScreen(
     onManageCustomStyles: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
-    val collections by viewModel.collections.collectAsStateWithLifecycle()
+    val cardModels by viewModel.cardModels.collectAsStateWithLifecycle()
     val nowMinuteOfDay by viewModel.nowMinuteOfDay.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     var pendingDelete by remember { mutableStateOf<CollectionConfig?>(null) }
@@ -88,7 +91,7 @@ fun HomeScreen(
                     }
                     IconButton(
                         onClick = {
-                            if (collections.isEmpty()) {
+                            if (cardModels.isEmpty()) {
                                 showEmptyWallpaperHint = true
                             } else {
                                 launchWallpaper()
@@ -107,7 +110,7 @@ fun HomeScreen(
             )
         },
     ) { padding ->
-        if (collections.isEmpty()) {
+        if (cardModels.isEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -125,12 +128,12 @@ fun HomeScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(collections, key = { it.id }) { item ->
+                items(cardModels, key = { it.config.id }) { item ->
                     CollectionCard(
-                        config = item,
+                        card = item,
                         nowMinuteOfDay = nowMinuteOfDay,
-                        onClick = { onEditCollection(item.id) },
-                        onRequestDelete = { pendingDelete = item },
+                        onClick = { onEditCollection(item.config.id) },
+                        onRequestDelete = { pendingDelete = item.config },
                     )
                 }
             }
@@ -201,11 +204,12 @@ fun HomeScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CollectionCard(
-    config: CollectionConfig,
+    card: CollectionCardUiModel,
     nowMinuteOfDay: Int,
     onClick: () -> Unit,
     onRequestDelete: () -> Unit,
 ) {
+    val config = card.config
     // Swiping never deletes directly: confirmValueChange always rejects the state change (returns
     // false) after surfacing the confirm dialog via onRequestDelete, so the box snaps back on its own.
     val dismissState = rememberSwipeToDismissBoxState(
@@ -249,12 +253,29 @@ private fun CollectionCard(
                 .clickable(onClick = onClick),
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                QuotePreview(
-                    state = QuoteRenderInput.fromCollection(config),
+                // Fixed thumbnail size (P4-011); the bitmap is loaded via the shared
+                // BackgroundImageLoader/Processor pipeline in HomeViewModel, with cancellation
+                // for stale/removed cards so a fast scroll never shows another card's photo.
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp),
-                )
+                        .width(360.dp)
+                        .height(200.dp)
+                        .align(Alignment.CenterHorizontally),
+                ) {
+                    QuotePreview(
+                        state = QuoteRenderInput.fromCollection(config),
+                        modifier = Modifier.fillMaxSize(),
+                        processedPhotoBitmap = card.thumbnailBitmap,
+                    )
+                    if (card.thumbnailLoadFailed) {
+                        Icon(
+                            Icons.Default.BrokenImage,
+                            contentDescription = "图片加载失败",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
