@@ -11,7 +11,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.wallquote"
+        applicationId = "dev.gaoxxx.wallquote"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
