@@ -23,13 +23,12 @@ import com.example.wallquote.domain.model.PhotoScaleMode
 import com.example.wallquote.domain.model.QuoteLine
 import com.example.wallquote.domain.model.QuoteTransform
 import com.example.wallquote.domain.model.TextStyleConfig
+import com.example.wallquote.domain.repository.RecentTextStyleRepository
 import com.example.wallquote.domain.style.BuiltInTextStylePresets
 import com.example.wallquote.domain.style.QuoteTransformNormalizer
 import com.example.wallquote.domain.style.TextStyleNormalizer
 import com.example.wallquote.domain.time.minuteFromHalfHourIndex
-import com.example.wallquote.domain.usecase.CreateStyleFromCollectionUseCase
 import com.example.wallquote.domain.usecase.GetCollectionUseCase
-import com.example.wallquote.domain.usecase.ObserveCustomStylesUseCase
 import com.example.wallquote.domain.usecase.SaveCollectionWithBackgroundUseCase
 import com.example.wallquote.wallpaper.background.BackgroundImageProcessor
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -50,8 +49,7 @@ class EditorViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val getCollectionUseCase: GetCollectionUseCase,
     private val saveCollectionWithBackgroundUseCase: SaveCollectionWithBackgroundUseCase,
-    private val observeCustomStylesUseCase: ObserveCustomStylesUseCase,
-    private val createStyleFromCollectionUseCase: CreateStyleFromCollectionUseCase,
+    private val recentTextStyleRepository: RecentTextStyleRepository,
     private val assetStore: BackgroundAssetStore,
     private val imageProcessor: BackgroundImageProcessor,
     private val backgroundSampler: BackgroundSampler,
@@ -92,19 +90,18 @@ class EditorViewModel @Inject constructor(
         }
 
     init {
-        viewModelScope.launch {
-            observeCustomStylesUseCase().collect { styles ->
-                _uiState.update { it.copy(customStyles = styles) }
-            }
-        }
         if (argCollectionId != null) {
             loadExisting(argCollectionId)
         } else {
-            applyState(buildNewEditorState())
+            viewModelScope.launch {
+                val recentStyle = runCatching { recentTextStyleRepository.get() }.getOrNull()
+                applyState(buildNewEditorState(recentStyle ?: TextStyleConfig()))
+            }
         }
     }
 
-    private fun buildNewEditorState(): EditorUiState {
+    /** New collections inherit the [initialStyle] (the recently-used style, or default). */
+    private fun buildNewEditorState(initialStyle: TextStyleConfig): EditorUiState {
         val entries = CollectionDefaults.defaultLines.map { line ->
             EditorTextEntry(lineId = 0, clientKey = newClientKey(), text = line.text)
         }
@@ -115,7 +112,7 @@ class EditorViewModel @Inject constructor(
             endMinute = 0,
             backgroundSpec = BackgroundSpec.Solid(CollectionDefaults.DEFAULT_SOLID_HEX),
             texts = entries,
-            textStyle = TextStyleConfig(),
+            textStyle = initialStyle,
             isLoading = false,
             selectedTab = EditorTab.Content,
             draftId = UUID.randomUUID().toString(),
@@ -513,27 +510,17 @@ class EditorViewModel @Inject constructor(
         applyTextStyle(preset.style)
     }
 
-    fun applyCustomStyle(id: Long) {
-        val style = _uiState.value.customStyles.firstOrNull { it.id == id } ?: return
-        applyTextStyle(style.style)
+    /** "使用最近样式" chip: applies the last saved style (from any collection), if any. */
+    fun applyRecentStyle() {
+        viewModelScope.launch {
+            val recent = runCatching { recentTextStyleRepository.get() }.getOrNull() ?: return@launch
+            applyTextStyle(recent)
+        }
     }
 
-    /** Copies the current collection text style into a new custom style (value copy, no FK). */
-    fun saveCurrentStyleAsCustom(name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) {
-            _uiState.update { it.copy(errorMessage = "样式名称不能为空") }
-            return
-        }
-        viewModelScope.launch {
-            runCatching {
-                createStyleFromCollectionUseCase(trimmed, _uiState.value.textStyle)
-            }.onFailure { error ->
-                _uiState.update {
-                    it.copy(errorMessage = error.message ?: "保存自定义样式失败")
-                }
-            }
-        }
+    /** "恢复默认样式" chip: resets to the built-in [TextStyleConfig] default. */
+    fun applyDefaultStyle() {
+        applyTextStyle(TextStyleConfig())
     }
 
     fun setLayoutAdjustEnabled(enabled: Boolean) {
@@ -711,6 +698,9 @@ class EditorViewModel @Inject constructor(
                 previousBackground = result.savedBackground
                 originalDraft = _uiState.value.toDraft()
                 requestProcessedPreview()
+                // Recent-style memory is best-effort: a DataStore write failure must not fail
+                // the (already-committed) save flow.
+                runCatching { recentTextStyleRepository.save(config.textStyle) }
                 _events.emit(EditorEvent.Finish)
             }.onFailure { error ->
                 // Keep staging and editor draft for retry.

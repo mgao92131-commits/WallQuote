@@ -68,7 +68,6 @@ import com.example.wallquote.core.preview.parseColorHex
 import com.example.wallquote.domain.automatch.TextStyleSuggestion
 import com.example.wallquote.domain.layout.QuoteGestureTransformer
 import com.example.wallquote.domain.model.BackgroundSpec
-import com.example.wallquote.domain.model.CustomTextStyle
 import com.example.wallquote.domain.model.QuoteLine
 import com.example.wallquote.domain.model.QuoteRenderInput
 import com.example.wallquote.domain.model.QuoteTransform
@@ -84,7 +83,6 @@ import kotlin.math.roundToInt
 fun EditorScreen(
     collectionId: Long?,
     onFinished: () -> Unit,
-    onManageCustomStyles: () -> Unit = {},
     viewModel: EditorViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -269,15 +267,13 @@ fun EditorScreen(
                         style = state.textStyle,
                         previewInputBase = state.toPreviewInput(),
                         processedPhotoBitmap = state.processedPreviewBitmap,
-                        customStyles = state.customStyles,
                         autoMatchAvailable = state.isAutoMatchAvailable,
                         autoMatchLoading = state.autoMatchLoading,
                         autoMatchSuggestion = state.autoMatchSuggestion,
                         onStyleChange = viewModel::updateTextStyle,
                         onApplyPreset = viewModel::applyPreset,
-                        onApplyCustomStyle = viewModel::applyCustomStyle,
-                        onManageCustomStyles = onManageCustomStyles,
-                        onSaveAsCustomStyle = viewModel::saveCurrentStyleAsCustom,
+                        onApplyRecentStyle = viewModel::applyRecentStyle,
+                        onApplyDefaultStyle = viewModel::applyDefaultStyle,
                         onRequestAutoMatch = viewModel::requestAutoMatch,
                         onConfirmAutoMatch = viewModel::confirmAutoMatch,
                         onUndoAutoMatch = viewModel::undoAutoMatch,
@@ -676,22 +672,18 @@ private fun StyleTabContent(
     style: TextStyleConfig,
     previewInputBase: QuoteRenderInput,
     processedPhotoBitmap: Bitmap?,
-    customStyles: List<CustomTextStyle>,
     autoMatchAvailable: Boolean,
     autoMatchLoading: Boolean,
     autoMatchSuggestion: TextStyleSuggestion?,
     onStyleChange: ((TextStyleConfig) -> TextStyleConfig) -> Unit,
     onApplyPreset: (String) -> Unit,
-    onApplyCustomStyle: (Long) -> Unit,
-    onManageCustomStyles: () -> Unit,
-    onSaveAsCustomStyle: (String) -> Unit,
+    onApplyRecentStyle: () -> Unit,
+    onApplyDefaultStyle: () -> Unit,
     onRequestAutoMatch: () -> Unit,
     onConfirmAutoMatch: () -> Unit,
     onUndoAutoMatch: () -> Unit,
 ) {
     var section by remember { mutableStateOf(StyleSection.Text) }
-    var showSaveAsDialog by remember { mutableStateOf(false) }
-    var saveAsName by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .padding(16.dp)
@@ -714,32 +706,19 @@ private fun StyleTabContent(
                     )
                 }
             }
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("自定义样式", style = MaterialTheme.typography.titleSmall)
-                Row {
-                    TextButton(onClick = { showSaveAsDialog = true }) { Text("另存为") }
-                    TextButton(onClick = onManageCustomStyles) { Text("管理") }
-                }
-            }
-            if (customStyles.isEmpty()) {
-                Text("暂无自定义样式", style = MaterialTheme.typography.bodySmall)
-            } else {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(customStyles, key = { it.id }) { custom ->
-                        FilterChip(
-                            selected = style == custom.style,
-                            onClick = { onApplyCustomStyle(custom.id) },
-                            label = { Text(custom.name) },
-                        )
-                    }
-                }
+            // Recent-style memory (replaces the former custom-style library, see DECISIONS.md):
+            // reuse whatever text style was last saved on any collection, or reset to default.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = false,
+                    onClick = onApplyRecentStyle,
+                    label = { Text("使用最近样式") },
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = onApplyDefaultStyle,
+                    label = { Text("恢复默认样式") },
+                )
             }
         }
 
@@ -777,33 +756,6 @@ private fun StyleTabContent(
         }
 
         StyleSectionContent(section = section, style = style, onStyleChange = onStyleChange)
-    }
-
-    if (showSaveAsDialog) {
-        AlertDialog(
-            onDismissRequest = { showSaveAsDialog = false },
-            title = { Text("另存为自定义样式") },
-            text = {
-                OutlinedTextField(
-                    value = saveAsName,
-                    onValueChange = { saveAsName = it },
-                    label = { Text("样式名称") },
-                    singleLine = true,
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onSaveAsCustomStyle(saveAsName)
-                        showSaveAsDialog = false
-                        saveAsName = ""
-                    },
-                ) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSaveAsDialog = false }) { Text("取消") }
-            },
-        )
     }
 }
 

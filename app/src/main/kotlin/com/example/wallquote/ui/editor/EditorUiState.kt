@@ -4,7 +4,6 @@ import com.example.wallquote.domain.automatch.TextStyleSuggestion
 import com.example.wallquote.domain.background.StagedBackgroundAsset
 import com.example.wallquote.domain.editor.EditorDraft
 import com.example.wallquote.domain.model.BackgroundSpec
-import com.example.wallquote.domain.model.CustomTextStyle
 import com.example.wallquote.domain.model.QuoteTransform
 import com.example.wallquote.domain.model.TextStyleConfig
 
@@ -64,8 +63,6 @@ data class EditorUiState(
     val processedPreviewBitmap: android.graphics.Bitmap? = null,
     /** True while the user is dragging/rotating the quote block directly on the preview. */
     val layoutAdjustEnabled: Boolean = false,
-    /** Custom styles available to apply, kept in sync via [com.example.wallquote.domain.usecase.ObserveCustomStylesUseCase]. */
-    val customStyles: List<CustomTextStyle> = emptyList(),
     /** Sampling + suggestion in progress for the "Auto Match" flow. */
     val autoMatchLoading: Boolean = false,
     /**

@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -61,7 +60,6 @@ import com.example.wallquote.wallpaper.LiveWallpaperLauncher
 fun HomeScreen(
     onNewCollection: () -> Unit,
     onEditCollection: (Long) -> Unit,
-    onManageCustomStyles: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val cardModels by viewModel.cardModels.collectAsStateWithLifecycle()
@@ -86,9 +84,6 @@ fun HomeScreen(
             TopAppBar(
                 title = { Text("壁上言") },
                 actions = {
-                    IconButton(onClick = onManageCustomStyles) {
-                        Icon(Icons.Default.Palette, contentDescription = "自定义样式")
-                    }
                     IconButton(
                         onClick = {
                             if (cardModels.isEmpty()) {

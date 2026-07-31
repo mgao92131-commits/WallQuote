@@ -38,18 +38,3 @@ data class CollectionTextLineEntity(
     val text: String,
     val displayOrder: Int,
 )
-
-@Entity(
-    tableName = "custom_styles",
-    // P4-014: uniqueness must be case/whitespace-insensitive, so it is enforced on
-    // `normalizedName` (trimmed + Locale.ROOT-lowercased at write time) rather than on the
-    // display-cased `name` column, which stays non-unique.
-    indices = [Index(value = ["normalizedName"], unique = true)],
-)
-data class CustomStyleEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val name: String,
-    val normalizedName: String,
-    val textStyleData: String,
-    val sortOrder: Int = 0,
-)
