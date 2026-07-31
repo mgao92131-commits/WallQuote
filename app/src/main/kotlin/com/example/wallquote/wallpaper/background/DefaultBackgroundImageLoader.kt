@@ -19,14 +19,13 @@ class DefaultBackgroundImageLoader @Inject constructor(
     private val cache: BackgroundBitmapCache,
 ) : BackgroundImageLoader, BackgroundMemoryController {
 
-    var diagnostics: WallpaperDiagnostics? = null
-
     override suspend fun load(
         assetId: String,
         targetWidth: Int,
         targetHeight: Int,
         blurRadiusDp: Float,
         density: Float,
+        diagnostics: WallpaperDiagnostics?,
     ): BackgroundImageResult = withContext(Dispatchers.Default) {
         if (targetWidth <= 0 || targetHeight <= 0) {
             return@withContext BackgroundImageResult.Failed(BackgroundImageFailure.Unknown)

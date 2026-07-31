@@ -1,6 +1,7 @@
 package com.example.wallquote.wallpaper.background
 
 import android.graphics.Bitmap
+import com.example.wallquote.wallpaper.WallpaperDiagnostics
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -56,12 +57,20 @@ interface BackgroundImageProcessor {
 }
 
 interface BackgroundImageLoader {
+    /**
+     * [diagnostics] is passed per-call (P4-017) rather than held as mutable Singleton state:
+     * multiple wallpaper Engine instances (e.g. two live-wallpaper surfaces, or an Engine plus
+     * the editor's HomeViewModel thumbnails) can share the same [BackgroundImageLoader]/cache
+     * singleton concurrently, and each caller supplies its own diagnostics sink (or none) rather
+     * than clobbering a shared mutable field.
+     */
     suspend fun load(
         assetId: String,
         targetWidth: Int,
         targetHeight: Int,
         blurRadiusDp: Float,
         density: Float,
+        diagnostics: WallpaperDiagnostics? = null,
     ): BackgroundImageResult
 
     fun trimToHalf()

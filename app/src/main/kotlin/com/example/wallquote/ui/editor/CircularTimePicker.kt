@@ -27,14 +27,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.example.wallquote.domain.time.CircularTimeGeometry
 import com.example.wallquote.domain.time.HALF_HOUR_SLOTS
+import com.example.wallquote.domain.time.TimeDragHandle
 import com.example.wallquote.domain.time.halfHourIndexFromMinute
 import com.example.wallquote.ui.util.formatMinuteOfDay
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
-
-private enum class DragHandle { Start, End, None }
 
 /**
  * 24h circular dial: 00:00 at the top, time increases clockwise. Dragging near the start or end
@@ -52,7 +51,11 @@ fun CircularTimePicker(
     val startSlot = halfHourIndexFromMinute(startMinute)
     val endSlot = halfHourIndexFromMinute(endMinute)
     val isAllDay = startSlot == endSlot
-    var activeDrag by remember { mutableStateOf(DragHandle.None) }
+    var activeDrag by remember { mutableStateOf<TimeDragHandle?>(null) }
+    // P4-016: remembers which handle was last picked so overlapping/equidistant touches (e.g.
+    // the "all day" state where both handles sit on top of each other) alternate between Start
+    // and End instead of always resolving to the same one.
+    var lastSelectedHandle by remember { mutableStateOf(TimeDragHandle.Start) }
 
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     val activeColor = MaterialTheme.colorScheme.primary
@@ -68,24 +71,25 @@ fun CircularTimePicker(
                         onDragStart = { offset ->
                             val center = Offset(size.width / 2f, size.height / 2f)
                             val touchSlot = CircularTimeGeometry.angleToNearestSlot(angleFromCenter(offset, center))
-                            activeDrag = if (
-                                slotDistance(touchSlot, startSlot) <= slotDistance(touchSlot, endSlot)
-                            ) {
-                                DragHandle.Start
-                            } else {
-                                DragHandle.End
-                            }
+                            val handle = CircularTimeGeometry.resolveDragHandle(
+                                touchSlot = touchSlot,
+                                startSlot = startSlot,
+                                endSlot = endSlot,
+                                lastSelected = lastSelectedHandle,
+                            )
+                            activeDrag = handle
+                            lastSelectedHandle = handle
                         },
-                        onDragEnd = { activeDrag = DragHandle.None },
-                        onDragCancel = { activeDrag = DragHandle.None },
+                        onDragEnd = { activeDrag = null },
+                        onDragCancel = { activeDrag = null },
                     ) { change, _ ->
                         change.consume()
                         val center = Offset(size.width / 2f, size.height / 2f)
                         val slot = CircularTimeGeometry.angleToNearestSlot(angleFromCenter(change.position, center))
                         when (activeDrag) {
-                            DragHandle.Start -> onStartSlotChange(slot)
-                            DragHandle.End -> onEndSlotChange(slot)
-                            DragHandle.None -> Unit
+                            TimeDragHandle.Start -> onStartSlotChange(slot)
+                            TimeDragHandle.End -> onEndSlotChange(slot)
+                            null -> Unit
                         }
                     }
                 },
@@ -198,11 +202,6 @@ private fun angleFromCenter(point: Offset, center: Offset): Float {
     var angle = mathDegrees + 90f
     if (angle < 0f) angle += 360f
     return angle % 360f
-}
-
-private fun slotDistance(a: Int, b: Int): Int {
-    val diff = kotlin.math.abs(a - b) % HALF_HOUR_SLOTS
-    return min(diff, HALF_HOUR_SLOTS - diff)
 }
 
 private fun wrapSlot(slot: Int): Int = ((slot % HALF_HOUR_SLOTS) + HALF_HOUR_SLOTS) % HALF_HOUR_SLOTS

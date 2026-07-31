@@ -59,4 +59,75 @@ class CircularTimeGeometryTest {
         val expectedSweep = (CircularTimeGeometry.SLOT_COUNT - 44 + 4) * (360f / CircularTimeGeometry.SLOT_COUNT)
         assertEquals(expectedSweep, arc.sweepDegrees, 0.0001f)
     }
+
+    // --- P4-016: overlapping-handle drag resolution ---
+
+    @Test
+    fun resolveDragHandle_picksStrictlyCloserHandle() {
+        assertEquals(
+            TimeDragHandle.Start,
+            CircularTimeGeometry.resolveDragHandle(
+                touchSlot = 4,
+                startSlot = 4,
+                endSlot = 20,
+                lastSelected = TimeDragHandle.End,
+            ),
+        )
+        assertEquals(
+            TimeDragHandle.End,
+            CircularTimeGeometry.resolveDragHandle(
+                touchSlot = 20,
+                startSlot = 4,
+                endSlot = 20,
+                lastSelected = TimeDragHandle.Start,
+            ),
+        )
+    }
+
+    @Test
+    fun resolveDragHandle_allDayOverlap_alternatesFromLastSelected() {
+        // startSlot == endSlot ("all day"): distances are always tied, so the tie-break must
+        // alternate rather than always favoring Start.
+        assertEquals(
+            TimeDragHandle.End,
+            CircularTimeGeometry.resolveDragHandle(
+                touchSlot = 4,
+                startSlot = 4,
+                endSlot = 4,
+                lastSelected = TimeDragHandle.Start,
+            ),
+        )
+        assertEquals(
+            TimeDragHandle.Start,
+            CircularTimeGeometry.resolveDragHandle(
+                touchSlot = 4,
+                startSlot = 4,
+                endSlot = 4,
+                lastSelected = TimeDragHandle.End,
+            ),
+        )
+    }
+
+    @Test
+    fun resolveDragHandle_equidistantNonOverlapping_alternatesFromLastSelected() {
+        // touchSlot=12 is 8 slots from both 4 and 20, even though start != end.
+        assertEquals(
+            TimeDragHandle.End,
+            CircularTimeGeometry.resolveDragHandle(
+                touchSlot = 12,
+                startSlot = 4,
+                endSlot = 20,
+                lastSelected = TimeDragHandle.Start,
+            ),
+        )
+        assertEquals(
+            TimeDragHandle.Start,
+            CircularTimeGeometry.resolveDragHandle(
+                touchSlot = 12,
+                startSlot = 4,
+                endSlot = 20,
+                lastSelected = TimeDragHandle.End,
+            ),
+        )
+    }
 }

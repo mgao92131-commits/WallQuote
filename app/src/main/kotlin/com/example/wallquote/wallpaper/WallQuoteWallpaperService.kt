@@ -56,8 +56,9 @@ class WallQuoteWallpaperService : WallpaperService() {
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
-            (imageLoader as? com.example.wallquote.wallpaper.background.DefaultBackgroundImageLoader)
-                ?.diagnostics = diagnostics
+            // P4-017: `imageLoader` is an app-wide Singleton (shared cache/processor), so its
+            // diagnostics are passed per-call by `WallpaperCoordinator` rather than mutated here
+            // on a shared field, which would be clobbered by other concurrent Engine instances.
             val renderer = CanvasWallpaperRenderer(
                 density = resources.displayMetrics.density,
                 fontScale = resources.configuration.fontScale,
