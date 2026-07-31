@@ -9,8 +9,12 @@ import com.example.wallquote.domain.repository.CustomStyleRepository
 import com.example.wallquote.domain.style.TextStyleNormalizer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** P4-014: trimmed + Locale.ROOT-lowercased, matching the unique index on `normalizedName`. */
+private fun normalizeStyleName(name: String): String = name.trim().lowercase(Locale.ROOT)
 
 @Singleton
 class CustomStyleRepositoryImpl @Inject constructor(
@@ -30,6 +34,7 @@ class CustomStyleRepositoryImpl @Inject constructor(
             dao.insert(
                 CustomStyleEntity(
                     name = normalized.name,
+                    normalizedName = normalizeStyleName(normalized.name),
                     textStyleData = normalized.style.toJson(),
                     sortOrder = if (normalized.sortOrder == 0) sort else normalized.sortOrder,
                 ),
@@ -39,6 +44,7 @@ class CustomStyleRepositoryImpl @Inject constructor(
                 CustomStyleEntity(
                     id = normalized.id,
                     name = normalized.name,
+                    normalizedName = normalizeStyleName(normalized.name),
                     textStyleData = normalized.style.toJson(),
                     sortOrder = normalized.sortOrder,
                 ),
@@ -53,13 +59,11 @@ class CustomStyleRepositoryImpl @Inject constructor(
     }
 
     override suspend fun reorder(orderedIds: List<Long>) {
-        orderedIds.forEachIndexed { index, id ->
-            dao.updateSortOrder(id, index)
-        }
+        dao.reorder(orderedIds)
     }
 
     override suspend fun existsName(name: String, excludingId: Long?): Boolean =
-        dao.countByName(name.trim(), excludingId) > 0
+        dao.countByNormalizedName(normalizeStyleName(name), excludingId) > 0
 
     private fun CustomStyleEntity.toDomain() = CustomTextStyle(
         id = id,
