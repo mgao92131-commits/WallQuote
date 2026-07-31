@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.example.wallquote.domain.CollectionDefaults
 import com.example.wallquote.domain.background.GradientGeometryCalculator
 import com.example.wallquote.domain.layout.MeasuredQuoteText
 import com.example.wallquote.domain.layout.QuoteBlockLayoutCalculator
@@ -84,7 +85,9 @@ fun QuotePreview(
                 )
             }
             is BackgroundSpec.Photo -> {
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                // Neutral placeholder while the bitmap is loading or missing, rather than pure
+                // black (which reads as a hard failure / empty state on real photo previews).
+                Box(Modifier.fillMaxSize().background(parseColorHex(CollectionDefaults.DEFAULT_SOLID_HEX))) {
                     if (processedPhotoBitmap != null && !processedPhotoBitmap.isRecycled) {
                         Image(
                             bitmap = processedPhotoBitmap.asImageBitmap(),
@@ -150,35 +153,38 @@ fun QuotePreview(
             val blockShape = RoundedCornerShape(style.blockCornerRadiusDp.dp)
             val blockColor = style.blockColorHex
             val borderColor = style.blockBorderColorHex
+            val hasBlock = TextStyleNormalizer.hasVisibleBlock(style) && blockColor != null
+            // Border visibility must NOT depend on the block fill (P4-008): a border-only style
+            // (no background fill) still needs to render its border and reserve padding.
+            val hasBorder = style.blockBorderWidthDp > 0f &&
+                borderColor != null &&
+                style.blockBorderAlpha > 0f
             Box(
                 modifier = Modifier
                     .rotate(layout.rotationDegrees)
                     .then(
-                        if (TextStyleNormalizer.hasVisibleBlock(style) && blockColor != null) {
-                            Modifier
-                                .background(
-                                    color = parseColorHex(blockColor).copy(alpha = style.blockAlpha),
-                                    shape = blockShape,
-                                )
-                                .then(
-                                    if (style.blockBorderWidthDp > 0f &&
-                                        borderColor != null &&
-                                        style.blockBorderAlpha > 0f
-                                    ) {
-                                        Modifier.border(
-                                            width = style.blockBorderWidthDp.dp,
-                                            color = parseColorHex(borderColor)
-                                                .copy(alpha = style.blockBorderAlpha),
-                                            shape = blockShape,
-                                        )
-                                    } else {
-                                        Modifier
-                                    },
-                                )
-                                .padding(style.blockPaddingDp.dp)
+                        if (hasBlock) {
+                            Modifier.background(
+                                color = parseColorHex(blockColor).copy(alpha = style.blockAlpha),
+                                shape = blockShape,
+                            )
                         } else {
                             Modifier
                         },
+                    )
+                    .then(
+                        if (hasBorder) {
+                            Modifier.border(
+                                width = style.blockBorderWidthDp.dp,
+                                color = parseColorHex(borderColor).copy(alpha = style.blockBorderAlpha),
+                                shape = blockShape,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .then(
+                        if (hasBlock || hasBorder) Modifier.padding(style.blockPaddingDp.dp) else Modifier,
                     ),
                 contentAlignment = Alignment.Center,
             ) {

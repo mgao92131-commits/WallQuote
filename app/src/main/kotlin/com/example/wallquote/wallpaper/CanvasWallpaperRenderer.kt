@@ -241,17 +241,19 @@ class CanvasWallpaperRenderer(
     }
 
     private fun resolveTypeface(style: TextStyleConfig): Typeface {
-        val family = when (style.fontFamily) {
-            SystemFontFamily.SansSerif -> Typeface.SANS_SERIF
-            SystemFontFamily.Monospace -> Typeface.MONOSPACE
-            SystemFontFamily.Cursive -> Typeface.DEFAULT
-            SystemFontFamily.Serif -> Typeface.SERIF
-        }
         var styleFlag = Typeface.NORMAL
         if (style.isBold && style.isItalic) styleFlag = Typeface.BOLD_ITALIC
         else if (style.isBold) styleFlag = Typeface.BOLD
         else if (style.isItalic) styleFlag = Typeface.ITALIC
-        return Typeface.create(family, styleFlag)
+        // "cursive" is a generic Typeface family name resolved by the platform/device font
+        // config, distinct from Typeface.DEFAULT (which previously made Cursive render
+        // identically to Sans/Serif's default). Typeface.create(String, Int) looks it up by name.
+        return when (style.fontFamily) {
+            SystemFontFamily.SansSerif -> Typeface.create(Typeface.SANS_SERIF, styleFlag)
+            SystemFontFamily.Monospace -> Typeface.create(Typeface.MONOSPACE, styleFlag)
+            SystemFontFamily.Cursive -> Typeface.create("cursive", styleFlag)
+            SystemFontFamily.Serif -> Typeface.create(Typeface.SERIF, styleFlag)
+        }
     }
 
     fun spToPx(sp: Float): Float = sp * density * fontScale
