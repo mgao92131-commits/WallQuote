@@ -352,6 +352,7 @@ class WallpaperCoordinator(
                     targetHeight = surfaceHeight,
                     blurRadiusDp = targetPhoto.blurRadiusDp,
                     density = density,
+                    diagnostics = diagnostics,
                 )
             }
             if (transitionToSpec !== toSpec) return@launch // superseded by a newer transition
@@ -371,6 +372,10 @@ class WallpaperCoordinator(
                 renderIfPossible(source = "$source:transition_from")
             },
             to = {
+                // Set alpha to 0 before adopting/rendering the target so the target's first
+                // frame never inherits a stale (possibly non-zero) alpha from the "from" side
+                // of the fade (P4-012).
+                transitionTextAlpha = 0f
                 transitionShowTarget = true
                 adoptTransitionTarget()
                 renderIfPossible(source = "$source:transition_switch")
@@ -547,6 +552,7 @@ class WallpaperCoordinator(
                 targetHeight = surfaceHeight,
                 blurRadiusDp = photo.blurRadiusDp,
                 density = density,
+                diagnostics = diagnostics,
             )
             offer(WallpaperEvent.BackgroundLoadCompleted(token, result))
         }

@@ -38,6 +38,10 @@ class WallpaperTransitionDriver(
                 val elapsed = nowMillis() - startTime
                 if (!switched && elapsed >= HALF_DURATION_MS) {
                     switched = true
+                    // Force a clean pass through alpha=0 at the exact switch point before
+                    // flipping the rendered spec to the target, so the target's first frame
+                    // never renders at a stale intermediate alpha (P4-012).
+                    onFrame(0f)
                     to()
                 }
                 if (elapsed >= TOTAL_DURATION_MS) {
