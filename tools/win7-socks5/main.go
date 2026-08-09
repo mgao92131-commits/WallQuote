@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -9,41 +10,170 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"syscall"
+	"strings"
+	"sync"
 	"time"
 )
 
+const defaultControlAddr = "127.0.0.1:1081"
+
 func main() {
+	hasConsole, cleanupLogging := setupLogging()
+	defer cleanupLogging()
+
 	listenAddr := flag.String("listen", "0.0.0.0:1080", "SOCKS5 listen address")
+	controlAddr := flag.String("control", defaultControlAddr, "local control address")
+	showStatus := flag.Bool("status", false, "show running status and exit")
+	stopServer := flag.Bool("stop", false, "stop the running server and exit")
 	flag.Parse()
 
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-
-	ln, err := net.Listen("tcp", *listenAddr)
-	if err != nil {
-		log.Fatalf("listen failed: %v", err)
+	if *showStatus {
+		result, err := controlCommand(*controlAddr, "status")
+		if err != nil {
+			printCommandResult(hasConsole, "not running")
+			return
+		}
+		printCommandResult(hasConsole, result)
+		return
 	}
-	defer ln.Close()
 
-	log.Printf("SOCKS5 server listening on %s", *listenAddr)
-	log.Printf("authentication: none")
-	log.Printf("TCP CONNECT only; press Ctrl+C to stop")
+	if *stopServer {
+		result, err := controlCommand(*controlAddr, "stop")
+		if err != nil {
+			printCommandResult(hasConsole, "not running")
+			return
+		}
+		printCommandResult(hasConsole, result)
+		return
+	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	startedAt := time.Now()
+
+	// Binding the loopback-only control port also acts as a single-instance guard.
+	controlListener, err := net.Listen("tcp", *controlAddr)
+	if err != nil {
+		if status, statusErr := controlCommand(*controlAddr, "status"); statusErr == nil && strings.HasPrefix(status, "running ") {
+			log.Printf("another instance is already running: %s", status)
+			return
+		}
+		log.Fatalf("control listener %s failed: %v", *controlAddr, err)
+	}
+	defer controlListener.Close()
+
+	listener, err := net.Listen("tcp", *listenAddr)
+	if err != nil {
+		log.Fatalf("SOCKS5 listener %s failed: %v", *listenAddr, err)
+	}
+	defer listener.Close()
+
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	requestStop := func(reason string) {
+		stopOnce.Do(func() {
+			log.Printf("stopping: %s", reason)
+			close(stopCh)
+		})
+	}
+
+	go serveControl(controlListener, *listenAddr, startedAt, requestStop)
 	go func() {
-		<-sig
-		log.Printf("shutting down")
-		_ = ln.Close()
+		<-stopCh
+		_ = listener.Close()
+		_ = controlListener.Close()
 	}()
 
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+	go func() {
+		select {
+		case <-interrupts:
+			requestStop("interrupt")
+		case <-stopCh:
+		}
+	}()
+
+	log.Printf("LAN SOCKS5 started")
+	log.Printf("SOCKS5 listen: %s", *listenAddr)
+	log.Printf("control: %s", *controlAddr)
+	log.Printf("authentication: none")
+	log.Printf("TCP CONNECT only")
+	if hasConsole {
+		log.Printf("console attached; Ctrl+C or -stop can stop the server")
+	}
+
 	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			select {
+			case <-stopCh:
+				log.Printf("LAN SOCKS5 stopped")
+				return
+			default:
+				log.Printf("accept failed: %v", acceptErr)
+				continue
+			}
 		}
 		go handleClient(conn)
 	}
+}
+
+func printCommandResult(hasConsole bool, result string) {
+	if hasConsole && os.Stdout != nil {
+		_, _ = fmt.Fprintln(os.Stdout, result)
+		return
+	}
+	log.Print(result)
+}
+
+func serveControl(listener net.Listener, socksListen string, startedAt time.Time, requestStop func(string)) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go handleControlConnection(conn, socksListen, startedAt, requestStop)
+	}
+}
+
+func handleControlConnection(conn net.Conn, socksListen string, startedAt time.Time, requestStop func(string)) {
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+
+	line, err := bufio.NewReader(io.LimitReader(conn, 128)).ReadString('\n')
+	if err != nil {
+		return
+	}
+
+	switch strings.TrimSpace(strings.ToLower(line)) {
+	case "status":
+		uptime := time.Since(startedAt).Round(time.Second)
+		_, _ = fmt.Fprintf(conn, "running pid=%d listen=%s uptime=%s\n", os.Getpid(), socksListen, uptime)
+	case "stop":
+		_, _ = io.WriteString(conn, "stopping\n")
+		requestStop("local control command")
+	default:
+		_, _ = io.WriteString(conn, "error unknown-command\n")
+	}
+}
+
+func controlCommand(controlAddr, command string) (string, error) {
+	conn, err := net.DialTimeout("tcp", controlAddr, 1500*time.Millisecond)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err = io.WriteString(conn, command+"\n"); err != nil {
+		return "", err
+	}
+
+	line, err := bufio.NewReader(io.LimitReader(conn, 512)).ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
 }
 
 func handleClient(client net.Conn) {
@@ -130,6 +260,9 @@ func readRequest(conn net.Conn) (string, error) {
 	}
 	if header[0] != 0x05 {
 		return "", fmt.Errorf("invalid SOCKS version")
+	}
+	if header[2] != 0x00 {
+		return "", fmt.Errorf("invalid reserved byte: %d", header[2])
 	}
 	if header[1] != 0x01 {
 		sendReply(conn, 0x07, nil)
