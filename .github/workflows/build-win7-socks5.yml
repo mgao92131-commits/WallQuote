@@ -44,7 +44,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: '0'
         run: |
-          go build -trimpath -ldflags='-s -w' -o "${{ matrix.output }}" .
+          go build -trimpath -ldflags='-s -w -H=windowsgui' -o "${{ matrix.output }}" .
           sha256sum "${{ matrix.output }}" > "${{ matrix.output }}.sha256"
 
       - name: Upload artifact
