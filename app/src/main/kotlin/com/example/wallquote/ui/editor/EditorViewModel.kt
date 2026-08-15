@@ -374,53 +374,6 @@ class EditorViewModel @Inject constructor(
         }
     }
 
-    fun updateGradient(
-        startHex: String? = null,
-        endHex: String? = null,
-        angleDegrees: Float? = null,
-    ) {
-        invalidateAutoMatch()
-        _uiState.update { state ->
-            val current = state.backgroundSpec as? BackgroundSpec.Gradient
-                ?: BackgroundSpec.Gradient("#2E3440", "#5E81AC", 90f)
-            state.copy(
-                backgroundSpec = current.copy(
-                    startColorHex = startHex ?: current.startColorHex,
-                    endColorHex = endHex ?: current.endColorHex,
-                    angleDegrees = angleDegrees ?: current.angleDegrees,
-                ),
-            )
-        }
-    }
-
-    fun swapGradientColors() {
-        invalidateAutoMatch()
-        _uiState.update { state ->
-            val current = state.backgroundSpec as? BackgroundSpec.Gradient ?: return@update state
-            state.copy(
-                backgroundSpec = current.copy(
-                    startColorHex = current.endColorHex,
-                    endColorHex = current.startColorHex,
-                ),
-            )
-        }
-    }
-
-    fun selectPhotoKind() {
-        invalidateAutoMatch()
-        _uiState.update { state ->
-            when (state.backgroundSpec) {
-                is BackgroundSpec.Photo -> state
-                else -> state.copy(
-                    backgroundSpec = BackgroundSpec.Photo(assetId = ""),
-                    photoEditorState = PhotoEditorState.Empty,
-                    resolvedPhotoPath = null,
-                    processedPreviewBitmap = null,
-                )
-            }
-        }
-    }
-
     fun onPhotoPickerLaunched() {
         _uiState.update { it.copy(photoEditorState = PhotoEditorState.Picking) }
     }
@@ -448,8 +401,6 @@ class EditorViewModel @Inject constructor(
         viewModelScope.launch {
             val generation = ++photoImportGeneration
             val oldStaging = _uiState.value.stagedBackground
-            val previousDim = (_uiState.value.backgroundSpec as? BackgroundSpec.Photo)?.dimAmount ?: 0.25f
-            val previousBlur = (_uiState.value.backgroundSpec as? BackgroundSpec.Photo)?.blurRadiusDp ?: 0f
             val draftId = _uiState.value.draftId
             _uiState.update { it.copy(photoEditorState = PhotoEditorState.Importing, errorMessage = null) }
 
@@ -466,8 +417,8 @@ class EditorViewModel @Inject constructor(
                     it.copy(
                         backgroundSpec = BackgroundSpec.Photo(
                             assetId = newStaging.stagingToken,
-                            dimAmount = previousDim,
-                            blurRadiusDp = previousBlur,
+                            dimAmount = 0f,
+                            blurRadiusDp = 0f,
                             scaleMode = PhotoScaleMode.CenterCrop,
                         ),
                         stagedBackground = newStaging,
@@ -495,39 +446,6 @@ class EditorViewModel @Inject constructor(
                         errorMessage = "图片导入失败，请重试",
                     )
                 }
-            }
-        }
-    }
-
-    fun setPhotoDim(dimAmount: Float) {
-        invalidateAutoMatch()
-        _uiState.update { state ->
-            val photo = state.backgroundSpec as? BackgroundSpec.Photo ?: return@update state
-            state.copy(backgroundSpec = photo.copy(dimAmount = dimAmount.coerceIn(0f, 1f)))
-        }
-    }
-
-    fun setPhotoBlur(blurRadiusDp: Float) {
-        invalidateAutoMatch()
-        _uiState.update { state ->
-            val photo = state.backgroundSpec as? BackgroundSpec.Photo ?: return@update state
-            state.copy(backgroundSpec = photo.copy(blurRadiusDp = blurRadiusDp.coerceIn(0f, 25f)))
-        }
-        requestProcessedPreview()
-    }
-
-    fun removePhoto() {
-        invalidateAutoMatch()
-        viewModelScope.launch {
-            discardCurrentStaging()
-            _uiState.update {
-                it.copy(
-                    backgroundSpec = BackgroundSpec.Solid(CollectionDefaults.DEFAULT_SOLID_HEX),
-                    stagedBackground = null,
-                    resolvedPhotoPath = null,
-                    processedPreviewBitmap = null,
-                    photoEditorState = PhotoEditorState.Empty,
-                )
             }
         }
     }
