@@ -166,5 +166,32 @@ Phase 1 不展示。Phase 2 起展示「设为壁纸」：优先 `ACTION_CHANGE_
   - 编辑既有收藏集：始终使用该收藏集自身持久化的 `textStyle`，**永不**被「最近样式」覆盖（`loadExisting` 路径不读取 `RecentTextStyleRepository`）。
   - 保存成功后：`saveAndFinish()` 用 `runCatching { recentTextStyleRepository.save(config.textStyle) }` 更新「最近样式」；DataStore 写入失败不影响已经提交成功的收藏集保存流程（best-effort，失败静默吞掉）。
   - 用户主动放弃（`discardAndFinish`）或返回时选择放弃修改，都不调用 `save`，「最近样式」保持不变。
-- **UI**：样式 Tab 保留内置预设网格（`BuiltInTextStylePresets`，视觉卡片）与 Auto Match；新增两个 `FilterChip`：「使用最近样式」（`EditorViewModel.applyRecentStyle`，读取当前 `RecentTextStyleRepository.get()` 并整体应用到当前编辑草稿）与「恢复默认样式」（`EditorViewModel.applyDefaultStyle`，应用 `TextStyleConfig()`）。两者都只影响当前编辑草稿的 `textStyle`，不会立即写回 DataStore（写回仍只发生在保存成功时）。
+- **UI**：样式 Tab 保留内置预设网格（`BuiltInTextStylePresets`，视觉卡片）与 Auto Match；新增两个 `FilterChip`：「使用最近样式」（`EditorViewModel.applyRecentStyle`，读取当前 `RecentTextStyleRepository.get()` 并整体应用到当前编辑草稿）与「恢复默认样式」（`EditorViewModel.applyDefaultStyle`，应用 `TextStyleConfig()`）。两者都只影响当前编辑草稿的 `textStyle`，不会立即写回 DataStore（写回仍只发生在保存成功时）。**Phase 5 起编辑器 Style UI 已改为全屏 Draft + MRU 行，见 D-028；本段 FilterChip 描述作废，DataStore 契约以 D-028 为准。**
 - **依赖**：`gradle/libs.versions.toml` 新增 `datastorePreferences = "1.1.7"` 与 `androidx-datastore-preferences` 库坐标；`data/build.gradle.kts` 增加 `implementation(libs.androidx.datastore.preferences)`。
+
+## D-028 Phase 5 编辑器壳层与首页（2026-08-15）
+
+- **范围**：只改 UI/交互。不改 domain 模型、`CollectionRepository`、`BackgroundAssetStore`、`QuotePreview`/`CanvasWallpaperRenderer` 绘制语义、`WallpaperCoordinator`、时间数学、背景图流水线、Auto Match domain。
+- **编辑器壳层**：`QuotePreview` 全屏；顶部关闭；`selectedPanel: EditorPanel?`。未展开时只显示 `EditorBottomDock`（时间/背景/内容/样式）；展开时只显示 `EditorBottomPanel`（含 Handle + `EditorPanel.title`），Dock 隐藏。二者互斥，避免 Panel（约屏高 58%）再叠一层 Dock 把 Preview 多吃一块。Style 不是 Bottom Panel：进入后 `startStyleDraft()`，全屏 Draft（× 丢弃 / ✓ 提交）。
+- **Preview 手势**：删除 `layoutAdjustEnabled` 模式；Preview 始终 `detectTransformGestures`（拖动/旋转）。
+- **Style Draft**：`styleDraft.workingStyle` 只驱动 Preview，不改正式 `textStyle`；✓ 才写入正式样式并 `RecentTextStyleRepository.save`；× 丢弃。最近使用是最多 6 条 MRU（自动去重、最近排前），无名字、无 CRUD、无 + NEW。DataStore 键 `recent_text_styles_json`，兼容旧单条 `recent_text_style_json` 并迁移。
+- **首页**：横向 Collection Card；溢出菜单重命名走 `RenameCollectionUseCase`（读原 Collection、只改 name、upsert），不改 Schema。收藏集名称仍在 DB，编辑器 chrome 不展示；默认名「新收藏集」。归档仍 deferred。
+- **状态**：Feature Complete / Acceptance Fixes Pending；验收修复见 Phase 5.1 与 D-029、D-030。
+
+## D-029 Auto Match 以 Draft working style 为 baseline（2026-08-15，P5-001）
+
+- `EditorUiState.autoMatchBaselineStyle` = `styleDraft?.workingStyle ?: textStyle`。`requestAutoMatch()` 用该值采样/建议，完成时 stale 检查比较的也是它，而不是正式 `textStyle`。
+- `previewTextStyle` 仍优先 `autoMatchSuggestion`，因此过期 suggestion 会盖住正在编辑的 working style，甚至在离开 Style 后泄漏到主编辑器 Preview。
+- 因此 `startStyleDraft`、`updateWorkingStyle`、`applyWorkingStyle`、`confirmStyleDraft`、`discardStyleDraft`、`updateTextStyle`、`applyTextStyle` 以及背景变更路径都必须 `invalidateAutoMatch()`（bump `autoMatchGeneration` 并清 suggestion/loading）。
+- `confirmAutoMatch` 在存在 draft 时只写 `workingStyle`，正式 `textStyle` 仍等 ✓。
+
+## D-030 统一 ColorPickerRow（2026-08-15，P5-003）
+
+- 公共颜色行不再只有固定 Hex 色块。`ColorPickerRow` 布局为 `[取消?] [色盘] | [预设…]`；色盘打开 HSV + Hex `ColorPickerDialog`（不引入第三方取色库）。
+- 语义：
+  - Text：不能取消文字颜色，只提供色盘与预设。
+  - Border 取消：`blockBorderWidthDp = 0`、`blockBorderColorHex = null`。
+  - Shadow 取消：`shadowAlpha = 0`。
+  - Block 取消：`blockColorHex = null`、`blockAlpha = 0`。
+  - Custom Background 纯色/渐变：无取消（必须有颜色），仍可走色盘。
+

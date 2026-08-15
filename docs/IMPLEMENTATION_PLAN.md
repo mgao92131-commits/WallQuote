@@ -10,6 +10,8 @@
 | **Phase 4 Feature Complete** | 样式系统、自定义样式、编辑交互、Auto Match、壁纸淡入淡出 |
 | **Phase 4.1 Acceptance Fixes Complete** | P4-001..P4-018 全部完成；P4-019 本地回归已补齐（含 `EditorViewModelAutoMatchTest`）；GitHub Actions 绿勾与 API 26/31/34 手工验证仍为 RC1 前置条件 |
 | **Phase 4.2 Style Simplification Complete** | 移除独立自定义样式库（列表页/编辑器/CRUD/Room 表），改为 DataStore 记忆「最近样式」；收藏集编辑器内联样式编辑保留（见 D-027） |
+| **Phase 5 Feature Complete / Acceptance Fixes Pending** | 全屏编辑器壳层、Bottom Dock/Panel、Content/Background/Time/Style 重设计、Preview 永久手势、Home 卡片与重命名已落地；验收修复见 Phase 5.1 |
+| **Phase 5.1 Acceptance Fixes** | Auto Match draft 竞态、Panel 展开隐藏 Dock、自定义颜色/取消、Panel 标题；Compose UI / 小屏 / IME 实机验证仍待 RC |
 
 ## 阶段总览
 
@@ -19,6 +21,8 @@
 | **2 / 2.1** | 动态壁纸最小闭环 + 验收修复 | 可设壁纸；P0/P1 审查项关闭 |
 | **3 / 3.1** | 渐变/图片背景 + 验收收口 | 保存可重试；共享处理；内存有界 |
 | **4** | 自定义样式、预设、Auto Match、动画 | 对齐 P1 需求；assemble / tests / lint |
+| **5** | 编辑器/首页 UI 重设计 | 主体功能落地；不标验收完成 |
+| **5.1** | Phase 5 验收修复 | 前 3 项 P1 关闭；文档同步；实机验证仍待 |
 
 ---
 
@@ -120,6 +124,39 @@ Phase 4.1 不引入新功能，只修复 Phase 4 验收中发现的功能错误�
 - [x] `EditorViewModel`：新建收藏集继承 `recent.get() ?: TextStyleConfig()`；既有收藏集样式不被覆盖；保存成功后 best-effort 更新最近样式；放弃/丢弃不更新；新增「使用最近样式」「恢复默认样式」两个 Style Tab chip
 - [x] 删除 `CustomStyleDaoTest`、`CustomStyleEditorViewModelTest`；更新 `EditorViewModelAutoMatchTest`（注入假 `RecentTextStyleRepository` 而非 `CustomStyleRepository`）；新增 `RecentTextStyleRepositoryTest`（DataStore 往返、损坏 JSON 返回 `null`）与 `EditorViewModelRecentStyleTest`（新建继承/既有不覆盖/保存成功更新/保存失败不更新/放弃不更新）
 - [x] `DECISIONS.md` D-027（取代 D-021/D-024）；`REQUIREMENTS.md`/本文件同步标注旧条目已作废
+
+---
+
+## Phase 5 任务（编辑器 / 首页 UI 重设计）
+
+状态：**Feature Complete / Acceptance Fixes Pending**。主体已在 `feat: redesign editor and home UI for Phase 5` 落地；不把本阶段标成验收完成。核心系统（domain 模型、`CollectionRepository`、`BackgroundAssetStore`、`QuotePreview`、`CanvasWallpaperRenderer`、`WallpaperCoordinator`、时间数学、背景图流水线、Auto Match domain）不变。
+
+- [x] 5.0 UI 拆分：`EditorScreen` 瘦身；Preview / Time / Background / Content / Style 独立
+- [x] 5.1 全屏编辑器壳层：全屏 Preview + 顶部关闭 + Bottom Dock
+- [x] 5.2 Bottom Panel：动画、高度、Handle；展开后与 Dock 互斥见 5.1 验收修复
+- [x] 5.3 Content：`BasicTextField` 卡片、当前行高亮、左滑删除、添加 Quote
+- [x] 5.4 Background：预设优先 + Custom 二级编辑
+- [x] 5.5 Time：圆环视觉化（0/6/12/18、S/E 手柄）；精确调整藏入二级 Dialog
+- [x] 5.6 Style：Draft、×/✓、五标签、最近使用 MRU（最多 6 条，无样式库 CRUD）
+- [x] 5.7 Preview 永久拖动/旋转：删除 `layoutAdjustEnabled`；始终 `detectTransformGestures`
+- [x] 5.8 Home：头部 + 横向 Collection Card；`RenameCollectionUseCase` 只改名称再 upsert
+- [x] 文档曾滞后到 Phase 4.2（本文件与 `DECISIONS.md` 在 5.1 补齐）
+- [ ] Compose UI / 小屏 / IME 实机验证（CI 只覆盖 assemble + unit tests + lint）
+
+---
+
+## Phase 5.1 任务（验收修复，不新增产品功能）
+
+Phase 5.1 只关闭 Phase 5 审查中的交互/状态错误，并补文档。条目按审查优先级编号。
+
+| ID | 摘要 | 状态 |
+|----|------|------|
+| P5-001 | Auto Match 仍以正式 `textStyle` 为 baseline/stale 检查，忽略 `styleDraft.workingStyle`；discard 不 bump generation，suggestion 可泄漏到主 Preview | ✅ 完成（baseline = `styleDraft?.workingStyle ?: textStyle`；`updateWorkingStyle` / `applyWorkingStyle` / `confirmStyleDraft` / `discardStyleDraft` / `startStyleDraft` / `updateTextStyle` 均 `invalidateAutoMatch()`；见 `EditorViewModelAutoMatchTest` 与 D-029） |
+| P5-002 | Bottom Panel 展开后 Dock 仍显示，Panel 实际高度被额外 Dock 顶高 | ✅ 完成（`selectedPanel == null` → Dock；非空 → Panel；二者互斥，见 D-028） |
+| P5-003 | Style 颜色行只有固定 Hex，丢失自定义颜色与取消 | ✅ 完成（统一 `ColorPickerRow`：取消 / 色盘 Dialog / 预设；Text 无取消；Border/Shadow/Block 取消语义见 D-030） |
+| P5-004 | Bottom Panel 缺 Time / Background / Content 标题 | ✅ 完成（`EditorBottomPanel` 使用 `EditorPanel.title`） |
+| P5-005 | Compose UI / 小屏 / IME 实机验证 | ❌ 未完成（无 `androidTest` 套件；CI 不覆盖视觉与真机 IME） |
+| P5-006 | 更新 `IMPLEMENTATION_PLAN.md` 与设计决策 | ✅ 完成（本段 + D-028 / D-029 / D-030） |
 
 ---
 
