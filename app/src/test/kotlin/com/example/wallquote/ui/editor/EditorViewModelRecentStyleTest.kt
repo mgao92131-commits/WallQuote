@@ -58,13 +58,14 @@ class EditorViewModelRecentStyleTest {
     private class FakeRecentTextStyleRepository(
         initial: TextStyleConfig? = null,
     ) : RecentTextStyleRepository {
-        var stored: TextStyleConfig? = initial
-        override suspend fun get(): TextStyleConfig? = stored
+        var items: List<TextStyleConfig> = listOfNotNull(initial)
+        val stored: TextStyleConfig? get() = items.firstOrNull()
+        override suspend fun getAll(): List<TextStyleConfig> = items
         override suspend fun save(style: TextStyleConfig) {
-            stored = style
+            items = com.example.wallquote.domain.style.RecentTextStyles.push(style, items)
         }
         override suspend fun clear() {
-            stored = null
+            items = emptyList()
         }
     }
 

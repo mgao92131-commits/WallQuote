@@ -114,7 +114,7 @@ class EditorViewModel @Inject constructor(
             texts = entries,
             textStyle = initialStyle,
             isLoading = false,
-            selectedTab = EditorTab.Content,
+            selectedPanel = null,
             draftId = UUID.randomUUID().toString(),
         )
     }
@@ -170,7 +170,7 @@ class EditorViewModel @Inject constructor(
             sortOrder = sortOrder,
             isLoading = false,
             previewTextIndex = 0,
-            selectedTab = EditorTab.Content,
+            selectedPanel = null,
             draftId = UUID.randomUUID().toString(),
             photoEditorState = photoState,
         )
@@ -254,8 +254,78 @@ class EditorViewModel @Inject constructor(
         _uiState.update { it.copy(autoMatchSuggestion = null, autoMatchLoading = false) }
     }
 
-    fun selectTab(tab: EditorTab?) {
-        _uiState.update { it.copy(selectedTab = tab) }
+    fun selectPanel(panel: EditorPanel) {
+        if (panel == EditorPanel.Style) {
+            startStyleDraft()
+            return
+        }
+        _uiState.update { current ->
+            current.copy(selectedPanel = if (current.selectedPanel == panel) null else panel)
+        }
+    }
+
+    fun dismissPanel() {
+        _uiState.update { it.copy(selectedPanel = null) }
+    }
+
+    fun startStyleDraft() {
+        viewModelScope.launch {
+            val recents = runCatching { recentTextStyleRepository.getAll() }.getOrElse { emptyList() }
+            _uiState.update { state ->
+                state.copy(
+                    selectedPanel = null,
+                    recentStyles = recents,
+                    autoMatchSuggestion = null,
+                    styleDraft = StyleEditorDraft(
+                        originalStyle = state.textStyle,
+                        workingStyle = state.textStyle,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun updateWorkingStyle(transform: (TextStyleConfig) -> TextStyleConfig) {
+        _uiState.update { state ->
+            val draft = state.styleDraft ?: return@update state
+            state.copy(
+                styleDraft = draft.copy(workingStyle = transform(draft.workingStyle)),
+                autoMatchSuggestion = null,
+            )
+        }
+    }
+
+    fun applyWorkingStyle(style: TextStyleConfig) {
+        _uiState.update { state ->
+            val draft = state.styleDraft ?: return@update state
+            state.copy(
+                styleDraft = draft.copy(workingStyle = style),
+                autoMatchSuggestion = null,
+            )
+        }
+    }
+
+    fun selectStyleTab(tab: StyleEditorTab) {
+        _uiState.update { state ->
+            val draft = state.styleDraft ?: return@update state
+            state.copy(styleDraft = draft.copy(selectedTab = tab))
+        }
+    }
+
+    fun confirmStyleDraft() {
+        viewModelScope.launch {
+            val draft = _uiState.value.styleDraft ?: return@launch
+            _uiState.update {
+                it.copy(textStyle = draft.workingStyle, styleDraft = null, autoMatchSuggestion = null)
+            }
+            runCatching { recentTextStyleRepository.save(draft.workingStyle) }
+            val recents = runCatching { recentTextStyleRepository.getAll() }.getOrElse { emptyList() }
+            _uiState.update { it.copy(recentStyles = recents) }
+        }
+    }
+
+    fun discardStyleDraft() {
+        _uiState.update { it.copy(styleDraft = null, autoMatchSuggestion = null) }
     }
 
     fun setName(name: String) {
@@ -473,22 +543,29 @@ class EditorViewModel @Inject constructor(
 
     fun updateText(clientKey: Long, text: String) {
         _uiState.update { state ->
+            val index = state.texts.indexOfFirst { it.clientKey == clientKey }
             state.copy(
                 texts = state.texts.map {
                     if (it.clientKey == clientKey) it.copy(text = text) else it
                 },
+                previewTextIndex = if (index >= 0) index else state.previewTextIndex,
             )
         }
     }
 
     fun deleteText(clientKey: Long) {
         _uiState.update { state ->
+            if (state.texts.size <= 1) return@update state
+            val deletedIndex = state.texts.indexOfFirst { it.clientKey == clientKey }
+            if (deletedIndex < 0) return@update state
             val filtered = state.texts.filterNot { it.clientKey == clientKey }
-            val safe = filtered.ifEmpty {
-                listOf(EditorTextEntry(lineId = 0, clientKey = newClientKey(), text = ""))
+            val newIndex = when {
+                state.previewTextIndex > deletedIndex -> state.previewTextIndex - 1
+                state.previewTextIndex == deletedIndex ->
+                    state.previewTextIndex.coerceIn(0, filtered.lastIndex)
+                else -> state.previewTextIndex
             }
-            val newIndex = state.previewTextIndex.coerceIn(0, (safe.size - 1).coerceAtLeast(0))
-            state.copy(texts = safe, previewTextIndex = newIndex)
+            state.copy(texts = filtered, previewTextIndex = newIndex.coerceIn(0, filtered.lastIndex))
         }
     }
 
@@ -510,23 +587,6 @@ class EditorViewModel @Inject constructor(
         applyTextStyle(preset.style)
     }
 
-    /** "使用最近样式" chip: applies the last saved style (from any collection), if any. */
-    fun applyRecentStyle() {
-        viewModelScope.launch {
-            val recent = runCatching { recentTextStyleRepository.get() }.getOrNull() ?: return@launch
-            applyTextStyle(recent)
-        }
-    }
-
-    /** "恢复默认样式" chip: resets to the built-in [TextStyleConfig] default. */
-    fun applyDefaultStyle() {
-        applyTextStyle(TextStyleConfig())
-    }
-
-    fun setLayoutAdjustEnabled(enabled: Boolean) {
-        _uiState.update { it.copy(layoutAdjustEnabled = enabled) }
-    }
-
     fun updateTransform(transform: QuoteTransform) {
         val normalized = QuoteTransformNormalizer.normalize(
             centerXFraction = transform.centerXFraction,
@@ -543,13 +603,9 @@ class EditorViewModel @Inject constructor(
     }
 
     /**
-     * Single entry point for both gesture-driven (pan/rotate on the preview) and slider-driven
-     * (`LayoutAdjustControls`) transform edits (P4-013 follow-up). Both call sites previously
-     * diverged: the gesture path clamped via [QuoteBlockLayoutCalculator.clampTransform] against
-     * the rotated text bounding box, while the sliders called [updateTransform] directly and
-     * relied only on their 0..1 / -180..180 ranges, so a rotated block could still be dragged
-     * mostly off-screen with the sliders. [rawTransform] is the unclamped candidate; when the
-     * preview viewport hasn't been measured yet, this falls back to just normalizing it.
+     * Single entry point for both gesture-driven (pan/rotate on the preview) transform edits
+     * (P4-013 follow-up). [rawTransform] is the unclamped candidate; when the preview viewport
+     * hasn't been measured yet, this falls back to just normalizing it.
      */
     fun updateTransformRequested(
         rawTransform: QuoteTransform,
@@ -634,7 +690,15 @@ class EditorViewModel @Inject constructor(
     fun confirmAutoMatch() {
         _uiState.update { state ->
             val suggestion = state.autoMatchSuggestion ?: return@update state
-            state.copy(textStyle = suggestion.style, autoMatchSuggestion = null)
+            val draft = state.styleDraft
+            if (draft != null) {
+                state.copy(
+                    styleDraft = draft.copy(workingStyle = suggestion.style),
+                    autoMatchSuggestion = null,
+                )
+            } else {
+                state.copy(textStyle = suggestion.style, autoMatchSuggestion = null)
+            }
         }
     }
 

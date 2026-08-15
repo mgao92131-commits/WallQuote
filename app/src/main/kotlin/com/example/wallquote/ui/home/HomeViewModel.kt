@@ -7,6 +7,7 @@ import com.example.wallquote.domain.model.BackgroundSpec
 import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.domain.usecase.DeleteCollectionUseCase
 import com.example.wallquote.domain.usecase.ObserveOrderedCollectionsUseCase
+import com.example.wallquote.domain.usecase.RenameCollectionUseCase
 import com.example.wallquote.wallpaper.AndroidClock
 import com.example.wallquote.wallpaper.background.BackgroundImageLoader
 import com.example.wallquote.wallpaper.background.BackgroundImageResult
@@ -42,6 +43,7 @@ private data class ThumbnailState(
 class HomeViewModel @Inject constructor(
     observeOrderedCollectionsUseCase: ObserveOrderedCollectionsUseCase,
     private val deleteCollectionUseCase: DeleteCollectionUseCase,
+    private val renameCollectionUseCase: RenameCollectionUseCase,
     private val backgroundImageLoader: BackgroundImageLoader,
 ) : ViewModel() {
 
@@ -142,9 +144,16 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun renameCollection(id: Long, name: String) {
+        viewModelScope.launch {
+            runCatching { renameCollectionUseCase(id, name) }
+                .onFailure { _errorMessage.value = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "重命名失败，请重试" }
+        }
+    }
+
     private companion object {
         const val NOW_TICK_MILLIS = 30_000L
-        const val THUMBNAIL_WIDTH_PX = 360
-        const val THUMBNAIL_HEIGHT_PX = 200
+        const val THUMBNAIL_WIDTH_PX = 180
+        const val THUMBNAIL_HEIGHT_PX = 240
     }
 }

@@ -4,15 +4,31 @@ import com.example.wallquote.domain.automatch.TextStyleSuggestion
 import com.example.wallquote.domain.background.StagedBackgroundAsset
 import com.example.wallquote.domain.editor.EditorDraft
 import com.example.wallquote.domain.model.BackgroundSpec
+import com.example.wallquote.domain.model.QuoteLine
+import com.example.wallquote.domain.model.QuoteRenderInput
 import com.example.wallquote.domain.model.QuoteTransform
 import com.example.wallquote.domain.model.TextStyleConfig
 
-enum class EditorTab {
+enum class EditorPanel {
     Time,
     Background,
     Content,
     Style,
 }
+
+enum class StyleEditorTab {
+    Text,
+    Border,
+    Shadow,
+    Block,
+    Align,
+}
+
+data class StyleEditorDraft(
+    val originalStyle: TextStyleConfig,
+    val workingStyle: TextStyleConfig,
+    val selectedTab: StyleEditorTab = StyleEditorTab.Text,
+)
 
 enum class BackgroundKind {
     Solid,
@@ -50,7 +66,8 @@ data class EditorUiState(
     val textStyle: TextStyleConfig = TextStyleConfig(),
     val transform: QuoteTransform = QuoteTransform(),
     val sortOrder: Int = 0,
-    val selectedTab: EditorTab? = EditorTab.Content,
+    /** Currently expanded bottom panel; `null` means only the dock is visible. */
+    val selectedPanel: EditorPanel? = null,
     val previewTextIndex: Int = 0,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
@@ -61,8 +78,6 @@ data class EditorUiState(
     val resolvedPhotoPath: String? = null,
     /** Shared CenterCrop+Blur result for editor preview (matches wallpaper pipeline). */
     val processedPreviewBitmap: android.graphics.Bitmap? = null,
-    /** True while the user is dragging/rotating the quote block directly on the preview. */
-    val layoutAdjustEnabled: Boolean = false,
     /** Sampling + suggestion in progress for the "Auto Match" flow. */
     val autoMatchLoading: Boolean = false,
     /**
@@ -71,18 +86,20 @@ data class EditorUiState(
      */
     val autoMatchSuggestion: TextStyleSuggestion? = null,
     /**
-     * Last measured size (px) of the preview area, reported by [EditorScreen]'s
-     * `EditorPreviewArea`. Not part of [toDraft] (purely a UI layout fact, not saved content);
-     * used by [com.example.wallquote.ui.editor.EditorViewModel.updateTransformRequested] to
-     * clamp slider- and gesture-driven transform edits identically (P4-013 follow-up). Zero
-     * until the preview area has been measured at least once.
+     * Last measured size (px) of the preview area, reported by `EditorPreview`.
+     * Not part of [toDraft] (purely a UI layout fact, not saved content); used by
+     * [EditorViewModel.updateTransformRequested] to clamp slider- and gesture-driven
+     * transform edits identically (P4-013 follow-up). Zero until the preview area has
+     * been measured at least once.
      */
     val previewViewportWidthPx: Int = 0,
     val previewViewportHeightPx: Int = 0,
+    val styleDraft: StyleEditorDraft? = null,
+    val recentStyles: List<TextStyleConfig> = emptyList(),
 ) {
-    /** What the preview (and only the preview) should render: the suggestion if one is pending, else [textStyle]. */
+    /** What the preview (and only the preview) should render. */
     val previewTextStyle: TextStyleConfig
-        get() = autoMatchSuggestion?.style ?: textStyle
+        get() = autoMatchSuggestion?.style ?: styleDraft?.workingStyle ?: textStyle
 
     val canSave: Boolean
         get() = name.isNotBlank() && texts.any { it.text.isNotBlank() } && !isSaving &&
@@ -101,6 +118,21 @@ data class EditorUiState(
             is BackgroundSpec.Photo -> processedPreviewBitmap != null
             else -> true
         }
+
+    fun toPreviewInput(): QuoteRenderInput {
+        val quoteLines = texts.mapIndexed { index, entry ->
+            QuoteLine(id = entry.lineId, text = entry.text, displayOrder = index)
+        }
+        return QuoteRenderInput(
+            background = backgroundSpec,
+            lines = quoteLines,
+            previewLineIndex = previewTextIndex,
+            // The preview must show a pending Auto Match suggestion without mutating the formal
+            // textStyle (see previewTextStyle / P4-005).
+            textStyle = previewTextStyle,
+            transform = transform,
+        )
+    }
 
     fun toDraft(): EditorDraft =
         EditorDraft(

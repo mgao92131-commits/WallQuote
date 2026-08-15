@@ -6,6 +6,7 @@ import com.example.wallquote.domain.usecase.CleanupOrphanBackgroundAssetsUseCase
 import com.example.wallquote.domain.usecase.DeleteCollectionUseCase
 import com.example.wallquote.domain.usecase.GetCollectionUseCase
 import com.example.wallquote.domain.usecase.ObserveOrderedCollectionsUseCase
+import com.example.wallquote.domain.usecase.RenameCollectionUseCase
 import com.example.wallquote.domain.usecase.SaveCollectionUseCase
 import com.example.wallquote.domain.usecase.SaveCollectionWithBackgroundUseCase
 import com.example.wallquote.domain.usecase.SelectActiveCollectionsUseCase
@@ -42,6 +43,12 @@ object DomainModule {
         assetStore: BackgroundAssetStore,
     ): SaveCollectionWithBackgroundUseCase =
         SaveCollectionWithBackgroundUseCase(repository, assetStore)
+
+    @Provides
+    @Singleton
+    fun provideRenameCollectionUseCase(
+        repository: CollectionRepository,
+    ): RenameCollectionUseCase = RenameCollectionUseCase(repository)
 
     @Provides
     @Singleton

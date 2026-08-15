@@ -104,7 +104,7 @@ class EditorViewModelAutoMatchTest {
 
     private class FakeRecentTextStyleRepository : RecentTextStyleRepository {
         var stored: TextStyleConfig? = null
-        override suspend fun get(): TextStyleConfig? = stored
+        override suspend fun getAll(): List<TextStyleConfig> = listOfNotNull(stored)
         override suspend fun save(style: TextStyleConfig) {
             stored = style
         }
