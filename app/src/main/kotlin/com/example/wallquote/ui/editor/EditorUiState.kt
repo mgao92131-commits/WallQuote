@@ -66,7 +66,6 @@ data class EditorUiState(
     val textStyle: TextStyleConfig = TextStyleConfig(),
     val transform: QuoteTransform = QuoteTransform(),
     val sortOrder: Int = 0,
-    /** Currently expanded bottom panel; `null` means only the dock is visible. */
     val selectedPanel: EditorPanel? = null,
     val previewTextIndex: Int = 0,
     val isLoading: Boolean = true,
@@ -100,6 +99,10 @@ data class EditorUiState(
     /** What the preview (and only the preview) should render. */
     val previewTextStyle: TextStyleConfig
         get() = autoMatchSuggestion?.style ?: styleDraft?.workingStyle ?: textStyle
+
+    /** Baseline for Auto Match: the in-progress style draft, else the formal style. */
+    val autoMatchBaselineStyle: TextStyleConfig
+        get() = styleDraft?.workingStyle ?: textStyle
 
     val canSave: Boolean
         get() = name.isNotBlank() && texts.any { it.text.isNotBlank() } && !isSaving &&

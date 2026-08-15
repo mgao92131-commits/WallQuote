@@ -208,4 +208,75 @@ class EditorViewModelAutoMatchTest {
 
         assertEquals(original, vm.uiState.value.toDraft().textStyle)
     }
+
+    @Test
+    fun inFlightAutoMatch_isStaleAfterWorkingStyleEdit() = runTest {
+        val sampler = ControllableSampler()
+        val vm = createViewModel(sampler)
+        val original = vm.uiState.value.textStyle
+        vm.selectPanel(EditorPanel.Style)
+        vm.requestAutoMatch()
+        assertTrue(vm.uiState.value.autoMatchLoading)
+
+        vm.updateWorkingStyle { it.copy(textSizeSp = 48f) }
+        sampler.gate.complete(Unit)
+
+        assertNull(vm.uiState.value.autoMatchSuggestion)
+        assertTrue(!vm.uiState.value.autoMatchLoading)
+        assertEquals(48f, vm.uiState.value.styleDraft!!.workingStyle.textSizeSp, 0.01f)
+        assertEquals(original, vm.uiState.value.textStyle)
+        assertEquals(48f, vm.uiState.value.previewTextStyle.textSizeSp, 0.01f)
+    }
+
+    @Test
+    fun discardStyleDraft_duringAutoMatch_doesNotLeakSuggestion() = runTest {
+        val sampler = ControllableSampler()
+        val vm = createViewModel(sampler)
+        val original = vm.uiState.value.textStyle
+        vm.selectPanel(EditorPanel.Style)
+        vm.requestAutoMatch()
+
+        vm.discardStyleDraft()
+        sampler.gate.complete(Unit)
+
+        assertNull(vm.uiState.value.styleDraft)
+        assertNull(vm.uiState.value.autoMatchSuggestion)
+        assertTrue(!vm.uiState.value.autoMatchLoading)
+        assertEquals(original, vm.uiState.value.textStyle)
+        assertEquals(original, vm.uiState.value.previewTextStyle)
+    }
+
+    @Test
+    fun confirmAutoMatch_duringDraft_writesWorkingStyleOnly() = runTest {
+        val sampler = ControllableSampler()
+        val vm = createViewModel(sampler)
+        val original = vm.uiState.value.textStyle
+        vm.selectPanel(EditorPanel.Style)
+        vm.requestAutoMatch()
+        sampler.gate.complete(Unit)
+        val suggested = vm.uiState.value.autoMatchSuggestion!!.style
+
+        vm.confirmAutoMatch()
+
+        assertNull(vm.uiState.value.autoMatchSuggestion)
+        assertEquals(suggested, vm.uiState.value.styleDraft?.workingStyle)
+        assertEquals(original, vm.uiState.value.textStyle)
+        assertEquals(suggested, vm.uiState.value.previewTextStyle)
+    }
+
+    @Test
+    fun workingStyleEdit_clearsVisibleAutoMatchSuggestion() = runTest {
+        val sampler = ControllableSampler()
+        val vm = createViewModel(sampler)
+        vm.selectPanel(EditorPanel.Style)
+        vm.requestAutoMatch()
+        sampler.gate.complete(Unit)
+        assertTrue(vm.uiState.value.autoMatchSuggestion != null)
+
+        vm.updateWorkingStyle { it.copy(textSizeSp = 52f) }
+
+        assertNull(vm.uiState.value.autoMatchSuggestion)
+        assertEquals(52f, vm.uiState.value.styleDraft!!.workingStyle.textSizeSp, 0.01f)
+        assertEquals(52f, vm.uiState.value.previewTextStyle.textSizeSp, 0.01f)
+    }
 }

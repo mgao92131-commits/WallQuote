@@ -270,12 +270,12 @@ class EditorViewModel @Inject constructor(
 
     fun startStyleDraft() {
         viewModelScope.launch {
+            invalidateAutoMatch()
             val recents = runCatching { recentTextStyleRepository.getAll() }.getOrElse { emptyList() }
             _uiState.update { state ->
                 state.copy(
                     selectedPanel = null,
                     recentStyles = recents,
-                    autoMatchSuggestion = null,
                     styleDraft = StyleEditorDraft(
                         originalStyle = state.textStyle,
                         workingStyle = state.textStyle,
@@ -286,22 +286,18 @@ class EditorViewModel @Inject constructor(
     }
 
     fun updateWorkingStyle(transform: (TextStyleConfig) -> TextStyleConfig) {
+        invalidateAutoMatch()
         _uiState.update { state ->
             val draft = state.styleDraft ?: return@update state
-            state.copy(
-                styleDraft = draft.copy(workingStyle = transform(draft.workingStyle)),
-                autoMatchSuggestion = null,
-            )
+            state.copy(styleDraft = draft.copy(workingStyle = transform(draft.workingStyle)))
         }
     }
 
     fun applyWorkingStyle(style: TextStyleConfig) {
+        invalidateAutoMatch()
         _uiState.update { state ->
             val draft = state.styleDraft ?: return@update state
-            state.copy(
-                styleDraft = draft.copy(workingStyle = style),
-                autoMatchSuggestion = null,
-            )
+            state.copy(styleDraft = draft.copy(workingStyle = style))
         }
     }
 
@@ -315,8 +311,9 @@ class EditorViewModel @Inject constructor(
     fun confirmStyleDraft() {
         viewModelScope.launch {
             val draft = _uiState.value.styleDraft ?: return@launch
+            invalidateAutoMatch()
             _uiState.update {
-                it.copy(textStyle = draft.workingStyle, styleDraft = null, autoMatchSuggestion = null)
+                it.copy(textStyle = draft.workingStyle, styleDraft = null)
             }
             runCatching { recentTextStyleRepository.save(draft.workingStyle) }
             val recents = runCatching { recentTextStyleRepository.getAll() }.getOrElse { emptyList() }
@@ -325,7 +322,8 @@ class EditorViewModel @Inject constructor(
     }
 
     fun discardStyleDraft() {
-        _uiState.update { it.copy(styleDraft = null, autoMatchSuggestion = null) }
+        invalidateAutoMatch()
+        _uiState.update { it.copy(styleDraft = null) }
     }
 
     fun setName(name: String) {
@@ -574,12 +572,14 @@ class EditorViewModel @Inject constructor(
     }
 
     fun updateTextStyle(transform: (TextStyleConfig) -> TextStyleConfig) {
-        _uiState.update { it.copy(textStyle = transform(it.textStyle), autoMatchSuggestion = null) }
+        invalidateAutoMatch()
+        _uiState.update { it.copy(textStyle = transform(it.textStyle)) }
     }
 
     /** Fully replaces the current (formal) style, e.g. from a built-in preset or custom style. */
     fun applyTextStyle(style: TextStyleConfig) {
-        _uiState.update { it.copy(textStyle = style, autoMatchSuggestion = null) }
+        invalidateAutoMatch()
+        _uiState.update { it.copy(textStyle = style) }
     }
 
     fun applyPreset(id: String) {
@@ -648,15 +648,15 @@ class EditorViewModel @Inject constructor(
      * Samples the current background and computes a contrast-safe suggestion for the preview
      * only ([EditorUiState.previewTextStyle]); the formal [EditorUiState.textStyle] is left
      * untouched until [confirmAutoMatch]. The result is dropped if, by the time sampling
-     * completes, the request generation, background (including dim/blur), or baseline text
-     * style have moved on (see [EditorUiState.previewTextStyle] doc and [autoMatchKey]).
+     * completes, the request generation, background (including dim/blur), or Auto Match
+     * baseline ([EditorUiState.autoMatchBaselineStyle]) have moved on.
      */
     fun requestAutoMatch() {
         val state = _uiState.value
         if (!state.isAutoMatchAvailable || state.autoMatchLoading) return
         val generation = ++autoMatchGeneration
         val requestBackgroundKey = state.backgroundSpec.autoMatchKey()
-        val baseline = state.textStyle
+        val baseline = state.autoMatchBaselineStyle
         viewModelScope.launch {
             _uiState.update { it.copy(autoMatchLoading = true, errorMessage = null) }
             val sample = runCatching {
@@ -666,7 +666,7 @@ class EditorViewModel @Inject constructor(
             val current = _uiState.value
             val stale = generation != autoMatchGeneration ||
                 current.backgroundSpec.autoMatchKey() != requestBackgroundKey ||
-                current.textStyle != baseline
+                current.autoMatchBaselineStyle != baseline
             if (stale) {
                 // Only clear the loading flag if this is still the most recent request; an even
                 // newer request's own loading state must not be clobbered.
