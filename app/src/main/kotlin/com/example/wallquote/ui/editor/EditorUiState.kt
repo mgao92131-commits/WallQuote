@@ -14,6 +14,15 @@ enum class EditorPanel {
     Background,
     Content,
     Style,
+    ;
+
+    val title: String
+        get() = when (this) {
+            Time -> "时间"
+            Background -> "背景"
+            Content -> "内容"
+            Style -> "样式"
+        }
 }
 
 enum class StyleEditorTab {

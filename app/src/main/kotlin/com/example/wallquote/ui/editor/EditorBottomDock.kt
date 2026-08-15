@@ -73,24 +73,16 @@ private fun DockItem(
     ) {
         Icon(
             imageVector = panel.icon,
-            contentDescription = panel.label,
+            contentDescription = panel.title,
             tint = contentColor,
         )
         Text(
-            text = panel.label,
+            text = panel.title,
             color = contentColor,
             fontSize = 11.sp,
         )
     }
 }
-
-private val EditorPanel.label: String
-    get() = when (this) {
-        EditorPanel.Time -> "时间"
-        EditorPanel.Background -> "背景"
-        EditorPanel.Content -> "内容"
-        EditorPanel.Style -> "样式"
-    }
 
 private val EditorPanel.icon: ImageVector
     get() = when (this) {

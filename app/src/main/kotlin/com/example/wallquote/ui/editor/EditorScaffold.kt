@@ -11,7 +11,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -68,12 +67,13 @@ fun EditorScaffold(
 
         EditorTopOverlay(onClose = onClose)
 
-        Column(
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .imePadding()
                 .navigationBarsPadding(),
+            contentAlignment = Alignment.BottomCenter,
         ) {
             AnimatedVisibility(
                 visible = selectedPanel != null,
@@ -83,6 +83,7 @@ fun EditorScaffold(
                 val panel = selectedPanel ?: visiblePanel
                 if (panel != null) {
                     EditorBottomPanel(
+                        title = panel.title,
                         height = (screenHeightDp * animatedFraction).dp,
                         onDismiss = onDismissPanel,
                     ) {
@@ -90,10 +91,16 @@ fun EditorScaffold(
                     }
                 }
             }
-            EditorBottomDock(
-                selectedPanel = selectedPanel,
-                onSelect = onSelectPanel,
-            )
+            AnimatedVisibility(
+                visible = selectedPanel == null,
+                enter = slideInVertically(tween(PanelAnimMs)) { it } + fadeIn(tween(220)),
+                exit = slideOutVertically(tween(PanelAnimMs)) { it } + fadeOut(tween(180)),
+            ) {
+                EditorBottomDock(
+                    selectedPanel = null,
+                    onSelect = onSelectPanel,
+                )
+            }
         }
     }
 }
