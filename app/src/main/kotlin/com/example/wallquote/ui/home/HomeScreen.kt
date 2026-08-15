@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -27,13 +28,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.wallquote.R
 import com.example.wallquote.domain.model.CollectionConfig
 import com.example.wallquote.ui.theme.WallQuoteColors
 import com.example.wallquote.wallpaper.LiveWallpaperLauncher
@@ -50,7 +49,6 @@ fun HomeScreen(
     var pendingDelete by remember { mutableStateOf<CollectionConfig?>(null) }
     var pendingRename by remember { mutableStateOf<CollectionConfig?>(null) }
     var renameDraft by remember { mutableStateOf("") }
-    var showEmptyWallpaperHint by remember { mutableStateOf(false) }
     var wallpaperError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
 
@@ -82,15 +80,14 @@ fun HomeScreen(
             )
             Spacer(Modifier.weight(1f))
             TextButton(
-                onClick = {
-                    if (cardModels.isEmpty()) {
-                        showEmptyWallpaperHint = true
-                    } else {
-                        launchWallpaper()
-                    }
-                },
+                onClick = { launchWallpaper() },
+                enabled = cardModels.isNotEmpty(),
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = WallQuoteColors.Beige,
+                    disabledContentColor = WallQuoteColors.Beige.copy(alpha = 0.35f),
+                ),
             ) {
-                Text("Wallpaper", color = WallQuoteColors.Beige)
+                Text("Wallpaper")
             }
             IconButton(onClick = onNewCollection) {
                 Icon(
@@ -131,25 +128,6 @@ fun HomeScreen(
                 }
             }
         }
-    }
-
-    if (showEmptyWallpaperHint) {
-        AlertDialog(
-            onDismissRequest = { showEmptyWallpaperHint = false },
-            title = { Text(stringResource(R.string.set_as_wallpaper)) },
-            text = { Text(stringResource(R.string.set_wallpaper_empty_hint)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showEmptyWallpaperHint = false
-                        launchWallpaper()
-                    },
-                ) { Text("继续设置") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEmptyWallpaperHint = false }) { Text("取消") }
-            },
-        )
     }
 
     wallpaperError?.let { message ->
