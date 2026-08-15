@@ -170,30 +170,9 @@ private fun EditorPanelBody(
         EditorPanel.Background -> BackgroundPanel(
             state = state,
             onApplyPreset = { preset -> applyBackgroundPreset(viewModel, preset) },
-            onSelectSolidKind = {
-                viewModel.setSolidBackground(
-                    (state.backgroundSpec as? BackgroundSpec.Solid)?.colorHex
-                        ?: "#2E3440",
-                )
-            },
-            onSelectGradientKind = {
-                val g = state.backgroundSpec as? BackgroundSpec.Gradient
-                viewModel.setGradientBackground(
-                    startHex = g?.startColorHex ?: "#2E3440",
-                    endHex = g?.endColorHex ?: "#5E81AC",
-                    angleDegrees = g?.angleDegrees ?: 90f,
-                )
-            },
-            onSelectPhotoKind = viewModel::selectPhotoKind,
-            onSolidSelected = viewModel::setSolidBackground,
-            onGradientChange = viewModel::updateGradient,
-            onSwapGradient = viewModel::swapGradientColors,
             onPickPhoto = viewModel::onPhotoPickerLaunched,
             onPickCancelled = viewModel::onPhotoPickerCancelled,
             onPhotoPicked = viewModel::importPickedPhoto,
-            onDimChange = viewModel::setPhotoDim,
-            onBlurChange = viewModel::setPhotoBlur,
-            onRemovePhoto = viewModel::removePhoto,
         )
         EditorPanel.Content -> ContentPanel(
             texts = state.texts,

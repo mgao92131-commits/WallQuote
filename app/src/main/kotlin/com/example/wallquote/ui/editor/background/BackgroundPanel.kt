@@ -1,5 +1,8 @@
 package com.example.wallquote.ui.editor.background
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,12 +21,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,43 +38,19 @@ import com.example.wallquote.ui.theme.WallQuoteColors
 fun BackgroundPanel(
     state: EditorUiState,
     onApplyPreset: (BackgroundPreset) -> Unit,
-    onSelectSolidKind: () -> Unit,
-    onSelectGradientKind: () -> Unit,
-    onSelectPhotoKind: () -> Unit,
-    onSolidSelected: (String) -> Unit,
-    onGradientChange: (startHex: String?, endHex: String?, angleDegrees: Float?) -> Unit,
-    onSwapGradient: () -> Unit,
     onPickPhoto: () -> Unit,
     onPickCancelled: () -> Unit,
     onPhotoPicked: (String) -> Unit,
-    onDimChange: (Float) -> Unit,
-    onBlurChange: (Float) -> Unit,
-    onRemovePhoto: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showingCustom by rememberSaveable { mutableStateOf(false) }
-    if (showingCustom) {
-        CustomBackgroundPanel(
-            state = state,
-            onBack = { showingCustom = false },
-            onSelectSolidKind = onSelectSolidKind,
-            onSelectGradientKind = onSelectGradientKind,
-            onSelectPhotoKind = onSelectPhotoKind,
-            onSolidSelected = onSolidSelected,
-            onGradientChange = onGradientChange,
-            onSwapGradient = onSwapGradient,
-            onPickPhoto = onPickPhoto,
-            onPickCancelled = onPickCancelled,
-            onPhotoPicked = onPhotoPicked,
-            onDimChange = onDimChange,
-            onBlurChange = onBlurChange,
-            onRemovePhoto = onRemovePhoto,
-            modifier = modifier,
-        )
-        return
+    val photoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) onPickCancelled() else onPhotoPicked(uri.toString())
     }
 
     val matched = BackgroundPresets.matching(state.backgroundSpec)
+    val usingPhoto = state.backgroundSpec is BackgroundSpec.Photo
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -107,7 +83,7 @@ fun BackgroundPanel(
                     Text(
                         text = preset.label,
                         color = WallQuoteColors.Ink,
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall,
                     )
                 }
             }
@@ -120,11 +96,18 @@ fun BackgroundPanel(
                 .clip(RoundedCornerShape(18.dp))
                 .background(WallQuoteColors.SurfaceRaised)
                 .border(
-                    width = if (matched == null) 1.5.dp else 1.dp,
-                    color = if (matched == null) WallQuoteColors.Beige else WallQuoteColors.BeigeMuted,
+                    width = if (usingPhoto) 1.5.dp else 1.dp,
+                    color = if (usingPhoto) WallQuoteColors.Beige else WallQuoteColors.BeigeMuted,
                     shape = RoundedCornerShape(18.dp),
                 )
-                .clickable { showingCustom = true },
+                .clickable {
+                    onPickPhoto()
+                    photoPicker.launch(
+                        PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.ImageOnly,
+                        ),
+                    )
+                },
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -134,7 +117,10 @@ fun BackgroundPanel(
                     tint = WallQuoteColors.CreamMuted,
                 )
                 Spacer(Modifier.height(4.dp))
-                Text("Custom", color = WallQuoteColors.Cream)
+                Text(
+                    text = if (usingPhoto) "替换图片" else "选择图片",
+                    color = WallQuoteColors.Cream,
+                )
             }
         }
     }
