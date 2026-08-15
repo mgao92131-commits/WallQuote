@@ -21,7 +21,7 @@ import com.example.wallquote.domain.automatch.TextStyleSuggestion
 import com.example.wallquote.domain.model.QuoteRenderInput
 import com.example.wallquote.domain.model.SystemFontFamily
 import com.example.wallquote.domain.model.TextStyleConfig
-import com.example.wallquote.ui.components.ColorSwatchRow
+import com.example.wallquote.ui.components.ColorPickerRow
 import com.example.wallquote.ui.components.OptionCard
 import com.example.wallquote.ui.components.WallQuoteSlider
 import com.example.wallquote.ui.theme.WallQuoteColors
@@ -64,7 +64,7 @@ fun TextStylePanel(
         }
 
         Text("颜色", color = WallQuoteColors.Ink)
-        ColorSwatchRow(
+        ColorPickerRow(
             selectedHex = style.colorHex,
             colors = TextColors,
             onSelect = { hex -> onStyleChange { it.copy(colorHex = hex) } },

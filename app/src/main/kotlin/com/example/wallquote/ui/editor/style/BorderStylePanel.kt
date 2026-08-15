@@ -11,7 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.wallquote.domain.model.TextStyleConfig
-import com.example.wallquote.ui.components.ColorSwatchRow
+import com.example.wallquote.ui.components.ColorPickerRow
 import com.example.wallquote.ui.components.WallQuoteSlider
 import com.example.wallquote.ui.theme.WallQuoteColors
 import kotlin.math.roundToInt
@@ -32,7 +32,7 @@ fun BorderStylePanel(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("颜色", color = WallQuoteColors.Ink)
-        ColorSwatchRow(
+        ColorPickerRow(
             selectedHex = style.blockBorderColorHex,
             colors = BorderColors,
             onSelect = { hex ->
@@ -42,6 +42,9 @@ fun BorderStylePanel(
                         blockBorderWidthDp = if (it.blockBorderWidthDp > 0f) it.blockBorderWidthDp else 1.5f,
                     )
                 }
+            },
+            onClear = {
+                onStyleChange { it.copy(blockBorderWidthDp = 0f, blockBorderColorHex = null) }
             },
         )
         WallQuoteSlider(

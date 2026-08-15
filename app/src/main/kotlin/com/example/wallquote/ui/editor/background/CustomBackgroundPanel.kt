@@ -34,7 +34,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import com.example.wallquote.core.preview.parseColorHex
 import com.example.wallquote.domain.model.BackgroundSpec
-import com.example.wallquote.ui.components.ColorSwatchRow
+import com.example.wallquote.ui.components.ColorPickerRow
 import com.example.wallquote.ui.components.WallQuoteSlider
 import com.example.wallquote.ui.editor.BackgroundKind
 import com.example.wallquote.ui.editor.EditorUiState
@@ -107,23 +107,26 @@ fun CustomBackgroundPanel(
         when (val bg = state.backgroundSpec) {
             is BackgroundSpec.Solid -> {
                 Text("颜色", color = WallQuoteColors.Ink)
-                ColorSwatchRow(
+                ColorPickerRow(
                     selectedHex = bg.colorHex,
                     colors = SolidColors,
                     onSelect = onSolidSelected,
+                    pickerFallbackHex = bg.colorHex,
                 )
             }
             is BackgroundSpec.Gradient -> {
                 Text("起始 / 结束颜色", color = WallQuoteColors.Ink)
-                ColorSwatchRow(
+                ColorPickerRow(
                     selectedHex = bg.startColorHex,
                     colors = SolidColors,
                     onSelect = { onGradientChange(it, null, null) },
+                    pickerFallbackHex = bg.startColorHex,
                 )
-                ColorSwatchRow(
+                ColorPickerRow(
                     selectedHex = bg.endColorHex,
                     colors = SolidColors,
                     onSelect = { onGradientChange(null, it, null) },
+                    pickerFallbackHex = bg.endColorHex,
                 )
                 Box(
                     modifier = Modifier
