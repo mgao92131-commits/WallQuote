@@ -39,12 +39,6 @@ data class StyleEditorDraft(
     val selectedTab: StyleEditorTab = StyleEditorTab.Text,
 )
 
-enum class BackgroundKind {
-    Solid,
-    Gradient,
-    Photo,
-}
-
 sealed interface PhotoEditorState {
     data object Empty : PhotoEditorState
     data object Picking : PhotoEditorState
@@ -116,13 +110,6 @@ data class EditorUiState(
     val canSave: Boolean
         get() = name.isNotBlank() && texts.any { it.text.isNotBlank() } && !isSaving &&
             photoEditorState !is PhotoEditorState.Importing
-
-    val backgroundKind: BackgroundKind
-        get() = when (backgroundSpec) {
-            is BackgroundSpec.Solid -> BackgroundKind.Solid
-            is BackgroundSpec.Gradient -> BackgroundKind.Gradient
-            is BackgroundSpec.Photo -> BackgroundKind.Photo
-        }
 
     /** Auto Match needs a decoded preview bitmap for photo backgrounds; solid/gradient are always ready. */
     val isAutoMatchAvailable: Boolean
